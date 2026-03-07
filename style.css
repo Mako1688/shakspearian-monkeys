@@ -1,0 +1,418 @@
+/* ============================================
+   Shakespearian Monkeys – Responsive Styles
+   ============================================ */
+
+/* --- Reset & Base --- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-dark: #1a1a2e;
+  --bg-card: #16213e;
+  --bg-button: #0f3460;
+  --accent: #e94560;
+  --gold: #f5c518;
+  --text: #eaeaea;
+  --text-dim: #a0a0b0;
+  --radius: 12px;
+  --gap: 1rem;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg-dark);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: var(--gap);
+}
+
+/* --- Layout --- */
+#game-container {
+  max-width: 600px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+header {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+header h1 {
+  font-size: 1.6rem;
+}
+
+.subtitle {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+/* --- Stats Panel --- */
+#stats-panel {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.stat {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+/* --- Typewriter Section --- */
+#typewriter-section {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+#typewriter-section h2 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+#typewriter-output {
+  background: #0d1117;
+  border-radius: 8px;
+  padding: 0.75rem;
+  min-height: 80px;
+  max-height: 150px;
+  overflow-y: auto;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.85rem;
+  color: #7ee787;
+  line-height: 1.5;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+#quote-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+
+#quote-label {
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+#progress-bar-container {
+  flex: 1;
+  height: 10px;
+  background: #0d1117;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+#progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--gold));
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+
+#progress-text {
+  min-width: 2.5rem;
+  text-align: right;
+  color: var(--gold);
+}
+
+/* --- Click Button --- */
+#click-section {
+  display: flex;
+  justify-content: center;
+}
+
+#click-btn {
+  background: linear-gradient(135deg, var(--accent), #c0392b);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius);
+  padding: 1.2rem 2.5rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  transition: transform 0.1s, box-shadow 0.1s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  width: 100%;
+  max-width: 300px;
+}
+
+#click-btn:active {
+  transform: scale(0.95);
+}
+
+#click-btn:hover {
+  box-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
+}
+
+.btn-emoji {
+  font-size: 2rem;
+}
+
+.btn-text {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.btn-sub {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* --- Upgrades --- */
+#upgrades-section h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+#upgrades-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.upgrade-btn {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  transition: border-color 0.2s, opacity 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  text-align: left;
+}
+
+.upgrade-btn:hover:not(:disabled) {
+  border-color: var(--gold);
+}
+
+.upgrade-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.upgrade-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.upgrade-desc {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.upgrade-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.upgrade-cost {
+  color: var(--gold);
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.upgrade-owned {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* --- Achievements --- */
+#achievements-section h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+#achievements-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.achievement {
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.achievement.completed {
+  border-left: 3px solid var(--gold);
+}
+
+.achievement.locked {
+  opacity: 0.5;
+}
+
+.achievement-name {
+  font-weight: 600;
+}
+
+.achievement-status {
+  color: var(--gold);
+  font-size: 0.8rem;
+}
+
+/* --- Footer --- */
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+  padding: 0.5rem 0 1rem;
+}
+
+footer button {
+  background: var(--bg-button);
+  color: var(--text);
+  border: 1px solid var(--text-dim);
+  border-radius: 8px;
+  padding: 0.5rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s;
+}
+
+footer button:hover {
+  background: var(--accent);
+}
+
+.auto-save-note {
+  width: 100%;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+/* --- Modal --- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 2rem;
+  text-align: center;
+  max-width: 350px;
+  width: 90%;
+}
+
+.modal-content h2 {
+  margin-bottom: 0.5rem;
+}
+
+.modal-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--gold);
+  margin: 0.5rem 0;
+}
+
+.modal-content button {
+  background: var(--accent);
+  color: var(--text);
+  border: none;
+  border-radius: 8px;
+  padding: 0.7rem 2rem;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-top: 0.75rem;
+}
+
+/* --- Responsive --- */
+@media (max-width: 480px) {
+  html {
+    font-size: 14px;
+  }
+
+  #stats-panel {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .upgrade-btn {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+  }
+
+  .upgrade-cost,
+  .upgrade-owned {
+    text-align: left;
+  }
+}
+
+@media (min-width: 768px) {
+  header h1 {
+    font-size: 2rem;
+  }
+
+  .stat-value {
+    font-size: 1.6rem;
+  }
+
+  #typewriter-output {
+    min-height: 120px;
+    max-height: 200px;
+  }
+}
