@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="description" content="An idle game about monkeys typing Shakespeare on typewriters" />
+  <title>Shakespearian Monkeys 🐒🎭</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-container">
+    <header>
+      <h1>🐒 Shakespearian Monkeys 🎭</h1>
+      <p class="subtitle">An Infinite Monkey Theorem Idle Game</p>
+    </header>
+
+    <section id="stats-panel">
+      <div class="stat">
+        <span class="stat-label">🍌 Bananas</span>
+        <span id="bananas" class="stat-value">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">⌨️ Letters/sec</span>
+        <span id="lps" class="stat-value">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">📝 Total Letters</span>
+        <span id="total-letters" class="stat-value">0</span>
+      </div>
+    </section>
+
+    <section id="typewriter-section">
+      <h2>Typewriter Output</h2>
+      <div id="typewriter-output" aria-live="polite"></div>
+      <div id="quote-progress">
+        <span id="quote-label">Current work:</span>
+        <div id="progress-bar-container">
+          <div id="progress-bar"></div>
+        </div>
+        <span id="progress-text">0%</span>
+      </div>
+    </section>
+
+    <section id="click-section">
+      <button id="click-btn" type="button" aria-label="Click to type a letter">
+        <span class="btn-emoji">🐒⌨️</span>
+        <span class="btn-text">Type!</span>
+        <span class="btn-sub">+1 letter per click</span>
+      </button>
+    </section>
+
+    <section id="upgrades-section">
+      <h2>Upgrades</h2>
+      <div id="upgrades-list">
+        <button class="upgrade-btn" data-upgrade="monkey" type="button">
+          <div class="upgrade-info">
+            <span class="upgrade-name">🐵 Hire Monkey</span>
+            <span class="upgrade-desc">+1 LPS</span>
+          </div>
+          <div class="upgrade-cost">
+            <span>Cost: </span><span id="cost-monkey">10</span> 🍌
+          </div>
+          <div class="upgrade-owned">
+            Owned: <span id="owned-monkey">0</span>
+          </div>
+        </button>
+
+        <button class="upgrade-btn" data-upgrade="typewriter" type="button">
+          <div class="upgrade-info">
+            <span class="upgrade-name">⌨️ Better Typewriter</span>
+            <span class="upgrade-desc">+5 LPS</span>
+          </div>
+          <div class="upgrade-cost">
+            <span>Cost: </span><span id="cost-typewriter">50</span> 🍌
+          </div>
+          <div class="upgrade-owned">
+            Owned: <span id="owned-typewriter">0</span>
+          </div>
+        </button>
+
+        <button class="upgrade-btn" data-upgrade="training" type="button">
+          <div class="upgrade-info">
+            <span class="upgrade-name">📚 Monkey Training</span>
+            <span class="upgrade-desc">2× LPS multiplier</span>
+          </div>
+          <div class="upgrade-cost">
+            <span>Cost: </span><span id="cost-training">500</span> 🍌
+          </div>
+          <div class="upgrade-owned">
+            Owned: <span id="owned-training">0</span>
+          </div>
+        </button>
+
+        <button class="upgrade-btn" data-upgrade="quill" type="button">
+          <div class="upgrade-info">
+            <span class="upgrade-name">🪶 Shakespeare's Quill</span>
+            <span class="upgrade-desc">10× LPS multiplier</span>
+          </div>
+          <div class="upgrade-cost">
+            <span>Cost: </span><span id="cost-quill">5000</span> 🍌
+          </div>
+          <div class="upgrade-owned">
+            Owned: <span id="owned-quill">0</span>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <section id="achievements-section">
+      <h2>Shakespeare Progress</h2>
+      <div id="achievements-list"></div>
+    </section>
+
+    <footer>
+      <button id="save-btn" type="button">💾 Save</button>
+      <button id="reset-btn" type="button">🗑️ Reset</button>
+      <p class="auto-save-note">Auto-saves every 30 seconds</p>
+    </footer>
+  </div>
+
+  <div id="offline-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-content">
+      <h2>Welcome Back! 🐒</h2>
+      <p>While you were away, your monkeys typed:</p>
+      <p class="modal-value" id="offline-earnings">0</p>
+      <p>bananas!</p>
+      <button id="offline-close" type="button">Collect</button>
+    </div>
+  </div>
+
+  <script type="module" src="dist/scripts.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "shakespearian-monkeys",
+  "version": "1.0.0",
+  "description": "An idle game themed around monkeys typing on typewriters, based on the infinite monkey theorem",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": ["idle-game", "typescript", "monkeys", "shakespeare"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
