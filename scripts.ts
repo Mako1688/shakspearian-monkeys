@@ -211,11 +211,7 @@ function addLetters(amount: number): void {
     if (remaining >= charsNeeded) {
       remaining -= charsNeeded;
       state.quoteCharIndex = 0;
-      state.quoteIndex++;
-      // If we've looped through all quotes, keep cycling
-      if (state.quoteIndex >= SHAKESPEARE_QUOTES.length) {
-        state.quoteIndex = 0;
-      }
+      state.quoteIndex = (state.quoteIndex + 1) % SHAKESPEARE_QUOTES.length;
     } else {
       state.quoteCharIndex += Math.floor(remaining);
       remaining = 0;
