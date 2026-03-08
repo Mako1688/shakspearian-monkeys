@@ -197,7 +197,7 @@ function getTotalLPS(): number {
 function getWordBonus(word: string, monkey?: MonkeyData): bigint {
   let bonus = BigInt(word.length * word.length);
 
-  // Word length tier bonus
+  // Word length tier bonus (words outside 3-10 range default to Common tier)
   const tier = WORD_LENGTH_TIERS[word.length] ?? WORD_LENGTH_TIERS[3];
   bonus = BigInt(Math.floor(Number(bonus) * tier.multiplier));
 
@@ -829,7 +829,8 @@ function tryGenerateSentence(): void {
   }
   const sentence = parts.join(" ");
 
-  const wordCount = parts.filter(p => p !== "*").length;
+  // All "*" tokens have been replaced, so parts.length is the total word count
+  const wordCount = parts.length;
   const bonus = BigInt(wordCount) * SENTENCE_BONUS_BASE;
   bananas += bonus;
 
