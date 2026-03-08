@@ -39,7 +39,7 @@ const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
   quill:      { baseCost: 5000, costMultiplier: 1.75, lpsAdd: 0,  lpsMultiplier: 10 },
 };
 
-// ~1200 common English words (3–8 letters, lowercase a-z only)
+// ~2900 common English words (3–8 letters, lowercase a-z only)
 const WORD_LIST: readonly string[] = [
   // 3-letter words
   "the","and","for","are","but","not","you","all","can","had","her","was","one",
