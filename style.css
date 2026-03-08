@@ -276,6 +276,13 @@ header h1 {
   gap: 0.4rem;
 }
 
+.cycle-header {
+  font-size: 0.8rem;
+  color: var(--gold);
+  margin: 0 0 0.3rem;
+  font-style: italic;
+}
+
 .achievement {
   background: var(--bg-card);
   border-radius: 8px;

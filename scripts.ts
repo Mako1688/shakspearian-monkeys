@@ -104,6 +104,8 @@ const dom = {
   bananas: () => getElement("bananas"),
   lps: () => getElement("lps"),
   totalLetters: () => getElement("total-letters"),
+  totalQuotes: () => getElement("total-quotes"),
+  cycleCount: () => getElement("cycle-count"),
   typewriterOutput: () => getElement("typewriter-output"),
   progressBar: () => getElement("progress-bar"),
   progressText: () => getElement("progress-text"),
@@ -122,7 +124,15 @@ function formatNumber(n: number): string {
   if (n < 1_000) return Math.floor(n).toString();
   if (n < 1_000_000) return (n / 1_000).toFixed(1) + "K";
   if (n < 1_000_000_000) return (n / 1_000_000).toFixed(2) + "M";
-  return (n / 1_000_000_000).toFixed(2) + "B";
+  if (n < 1_000_000_000_000) return (n / 1_000_000_000).toFixed(2) + "B";
+  if (n < 1e15) return (n / 1e12).toFixed(2) + "T";
+  if (n < 1e18) return (n / 1e15).toFixed(2) + "Qa";
+  if (n < 1e21) return (n / 1e18).toFixed(2) + "Qi";
+  if (n < 1e24) return (n / 1e21).toFixed(2) + "Sx";
+  if (n < 1e27) return (n / 1e24).toFixed(2) + "Sp";
+  if (n < 1e30) return (n / 1e27).toFixed(2) + "Oc";
+  if (n < 1e33) return (n / 1e30).toFixed(2) + "No";
+  return (n / 1e33).toFixed(2) + "Dc";
 }
 
 // --------------- Rendering ---------------
@@ -131,6 +141,8 @@ function renderStats(): void {
   dom.bananas().textContent = formatNumber(state.bananas);
   dom.lps().textContent = formatNumber(getLettersPerSecond());
   dom.totalLetters().textContent = formatNumber(state.totalLetters);
+  dom.totalQuotes().textContent = formatNumber(state.quoteIndex);
+  dom.cycleCount().textContent = (Math.floor(state.quoteIndex / SHAKESPEARE_QUOTES.length) + 1).toString();
 }
 
 function renderUpgrades(): void {
@@ -148,7 +160,8 @@ function renderUpgrades(): void {
 
 function renderTypewriter(): void {
   const output = dom.typewriterOutput();
-  const currentQuote = SHAKESPEARE_QUOTES[state.quoteIndex % SHAKESPEARE_QUOTES.length];
+  const cycleQuoteIndex = state.quoteIndex % SHAKESPEARE_QUOTES.length;
+  const currentQuote = SHAKESPEARE_QUOTES[cycleQuoteIndex];
   const typed = currentQuote.slice(0, state.quoteCharIndex);
 
   output.textContent = typed;
@@ -167,10 +180,18 @@ function renderAchievements(): void {
   const list = dom.achievementsList();
   list.innerHTML = "";
 
+  const cycleQuoteIndex = state.quoteIndex % SHAKESPEARE_QUOTES.length;
+  const cycleNum = Math.floor(state.quoteIndex / SHAKESPEARE_QUOTES.length) + 1;
+
+  const cycleHeader = document.createElement("p");
+  cycleHeader.className = "cycle-header";
+  cycleHeader.textContent = `Cycle ${cycleNum} — ${state.quoteIndex} quote${state.quoteIndex !== 1 ? "s" : ""} completed all-time`;
+  list.appendChild(cycleHeader);
+
   for (let i = 0; i < SHAKESPEARE_QUOTES.length; i++) {
     const div = document.createElement("div");
-    const completed = i < state.quoteIndex;
-    const current = i === state.quoteIndex;
+    const completed = i < cycleQuoteIndex;
+    const current = i === cycleQuoteIndex;
     div.className = `achievement ${completed ? "completed" : "locked"}`;
 
     const name = document.createElement("span");
@@ -202,7 +223,7 @@ function addLetters(amount: number): void {
   state.bananas += amount;
   state.totalLetters += amount;
 
-  // Advance through quotes
+  // Advance through quotes — quoteIndex grows unbounded for infinite progression
   let remaining = amount;
   while (remaining > 0) {
     const currentQuote = SHAKESPEARE_QUOTES[state.quoteIndex % SHAKESPEARE_QUOTES.length];
@@ -211,7 +232,7 @@ function addLetters(amount: number): void {
     if (remaining >= charsNeeded) {
       remaining -= charsNeeded;
       state.quoteCharIndex = 0;
-      state.quoteIndex = (state.quoteIndex + 1) % SHAKESPEARE_QUOTES.length;
+      state.quoteIndex++;            // intentionally no modulo — lets cycles accumulate
     } else {
       state.quoteCharIndex += Math.floor(remaining);
       remaining = 0;
@@ -275,9 +296,8 @@ function handleOfflineProgress(): void {
   const lps = getLettersPerSecond();
   if (lps <= 0) return;
 
-  // Cap offline earnings at 8 hours
-  const cappedElapsed = Math.min(elapsed, 8 * 60 * 60);
-  const offlineLetters = Math.floor(lps * cappedElapsed);
+  // No cap on offline earnings — infinite growth is the goal
+  const offlineLetters = Math.floor(lps * elapsed);
 
   if (offlineLetters > 0) {
     addLetters(offlineLetters);
