@@ -9,9 +9,23 @@ const TICK_INTERVAL_MS = 100; // 10 ticks per second
 const MAX_WORD_LENGTH = 10;
 const MIN_WORD_LENGTH = 3;
 const COMBO_WINDOW_MS = 3000; // 3 seconds for combo
-const MAX_TICKER_HISTORY = 12;
-const MAX_DISPLAY_CHARS = 60;
+const MAX_TICKER_HISTORY = 20; // recent words per monkey ticker
+const MAX_DISPLAY_CHARS = 80; // chars to keep in vertical receipt
 const MAX_RECENT_WORDS = 10;
+const MAX_LPS_PER_MONKEY = 200; // hard cap to prevent browser hangs
+// Words that appear in the dictionary but are not real everyday words
+const BANNED_WORDS = new Set([
+    "iii", "iiii", "vii", "viii", "xii", "xiii", "xiv", "xvi", "xvii", "xviii", "xix",
+    "xxi", "xxii", "xxiii", "xxiv", "xxv", "xxvi", "xxvii", "xxix", "xxx",
+    "xxxi", "xxxii", "xxxiii", "xxxiv", "xxxv", "xxxix",
+    "lii", "liii", "liv", "lvi", "lvii", "lviii", "lix",
+    "lxi", "lxii", "lxiii", "lxiv", "lxv", "lxvi", "lxvii", "lxix",
+    "xcii", "xciii", "xciv", "xcvi", "xcvii", "xcix",
+    "aaa", "bbb", "ccc", "ddd", "eee", "fff", "ggg", "hhh",
+    "jjj", "kkk", "lll", "mmm", "nnn", "ooo", "ppp", "qqq",
+    "rrr", "sss", "ttt", "uuu", "vvv", "www", "yyy", "zzz",
+    "abcs", "abcd", "zzzz",
+]);
 const MONKEY_NAMES = [
     "Hamlet", "Othello", "Macbeth", "Prospero", "Oberon",
     "Puck", "Ariel", "Caliban", "Romeo", "Juliet",
@@ -24,29 +38,23 @@ const MONKEY_NAMES = [
     "Jaques", "Orlando", "Celia", "Bianca", "Cassio",
     "Desdemona", "Emilia", "Iago", "Banquo", "Duncan",
 ];
+// Costs are much higher and scaling is steeper to prevent runaway progression.
+// Training gives +1.5x (not 2x) per level; Quill gives +3x (not 10x).
 const GLOBAL_UPGRADES = {
-    monkey: { name: "Hire Monkey", desc: "+1 new monkey typist", baseCost: 10n, costMult: 1.15 },
-    typewriter: { name: "Better Typewriters", desc: "+1 LPS per monkey", baseCost: 100n, costMult: 1.30 },
-    training: { name: "Monkey Training", desc: "2x LPS multiplier (all)", baseCost: 500n, costMult: 1.50 },
-    quill: { name: "Golden Quill", desc: "10x LPS multiplier (all)", baseCost: 5000n, costMult: 1.75 },
-};
-const CLICK_UPGRADES = {
-    power: { name: "Quick Fingers", desc: "+1 chars per click", baseCost: 25n, costMult: 1.20 },
-    multiplier: { name: "Double Tap", desc: "2x click power", baseCost: 200n, costMult: 1.50 },
+    monkey: { name: "Hire Monkey", desc: "+1 new monkey typist", baseCost: 15n, costMult: 1.50 },
+    typewriter: { name: "Better Typewriters", desc: "+1 LPS per monkey", baseCost: 250n, costMult: 1.65 },
+    training: { name: "Monkey Training", desc: "1.5x LPS multiplier (all)", baseCost: 2000n, costMult: 2.20 },
+    quill: { name: "Golden Quill", desc: "3x LPS multiplier (all)", baseCost: 40000n, costMult: 3.50 },
 };
 const MONKEY_UPGRADE_DEFS = {
-    speed: { name: "Speed Boost", desc: "+1 LPS for this monkey", baseCost: 20n, costMult: 1.15 },
-    bonus: { name: "Word Mastery", desc: "1.5x word bonus", baseCost: 100n, costMult: 1.30 },
+    speed: { name: "Speed Boost", desc: "+1 LPS for this monkey", baseCost: 40n, costMult: 1.45 },
+    bonus: { name: "Word Mastery", desc: "1.5x word bonus", baseCost: 200n, costMult: 1.65 },
 };
 // --------------- Runtime State ---------------
 let bananas = 0n;
 let totalLetters = 0n;
 let globalUpgrades = { monkey: 0, typewriter: 0, training: 0, quill: 0 };
-let clickUpgrades = { power: 0, multiplier: 0 };
 let monkeys = [];
-let playerBuffer = "";
-let playerDisplayChars = "";
-let playerTickerHistory = [];
 let recentWords = [];
 let wordCounts = {};
 let totalWordsFound = 0;
@@ -63,12 +71,14 @@ function getUpgradeCost(defs, id, level) {
 }
 function getMonkeyLPS(monkey) {
     const base = 1 + globalUpgrades.typewriter + monkey.speedLevel;
+    // Training: 1.5x per level (was 2x), Quill: 3x per level (was 10x)
     let mult = 1;
     if (globalUpgrades.training > 0)
-        mult *= Math.pow(2, globalUpgrades.training);
+        mult *= Math.pow(1.5, globalUpgrades.training);
     if (globalUpgrades.quill > 0)
-        mult *= Math.pow(10, globalUpgrades.quill);
-    return base * mult;
+        mult *= Math.pow(3, globalUpgrades.quill);
+    // Hard cap to prevent browser hangs from extreme upgrade stacking
+    return Math.min(base * mult, MAX_LPS_PER_MONKEY);
 }
 function getTotalLPS() {
     let total = 0;
@@ -76,11 +86,6 @@ function getTotalLPS() {
         total += getMonkeyLPS(m);
     }
     return total;
-}
-function getClickPower() {
-    const base = 1 + clickUpgrades.power;
-    const mult = Math.pow(2, clickUpgrades.multiplier);
-    return Math.floor(base * mult);
 }
 function getWordBonus(word, monkey) {
     let bonus = BigInt(word.length * word.length);
@@ -108,14 +113,14 @@ function getWordBonus(word, monkey) {
 function checkForWordInBuffer(buffer, monkey) {
     for (let len = Math.min(buffer.length, MAX_WORD_LENGTH); len >= MIN_WORD_LENGTH; len--) {
         const candidate = buffer.slice(-len);
-        if (WORD_SET.has(candidate)) {
+        if (WORD_SET.has(candidate) && !BANNED_WORDS.has(candidate)) {
             const bonus = getWordBonus(candidate, monkey);
             return { word: candidate, bonus };
         }
     }
     return null;
 }
-// --------------- Character Generation ---------------
+const pendingWordFloats = [];
 function generateCharsForMonkey(monkey, amount) {
     const chars = Math.floor(amount);
     if (chars <= 0)
@@ -138,6 +143,8 @@ function generateCharsForMonkey(monkey, amount) {
             monkey.tickerHistory.unshift(result.word + " (+" + result.bonus.toString() + ")");
             if (monkey.tickerHistory.length > MAX_TICKER_HISTORY)
                 monkey.tickerHistory.pop();
+            // Queue a float animation for the render cycle
+            pendingWordFloats.push({ monkeyId: monkey.id, word: result.word, bonus: result.bonus });
             monkey.buffer = "";
         }
         if (monkey.buffer.length > MAX_WORD_LENGTH) {
@@ -146,37 +153,6 @@ function generateCharsForMonkey(monkey, amount) {
     }
     if (monkey.displayChars.length > MAX_DISPLAY_CHARS) {
         monkey.displayChars = monkey.displayChars.slice(-MAX_DISPLAY_CHARS);
-    }
-}
-function generateCharsForPlayer(amount) {
-    const chars = Math.floor(amount);
-    if (chars <= 0)
-        return;
-    bananas += BigInt(chars);
-    totalLetters += BigInt(chars);
-    for (let i = 0; i < chars; i++) {
-        const char = String.fromCharCode(97 + Math.floor(Math.random() * 26));
-        playerBuffer += char;
-        playerDisplayChars += char;
-        const result = checkForWordInBuffer(playerBuffer);
-        if (result) {
-            bananas += result.bonus;
-            totalWordsFound++;
-            wordCounts[result.word] = (wordCounts[result.word] || 0) + 1;
-            recentWords.unshift(result.word);
-            if (recentWords.length > MAX_RECENT_WORDS)
-                recentWords.pop();
-            playerTickerHistory.unshift(result.word + " (+" + result.bonus.toString() + ")");
-            if (playerTickerHistory.length > MAX_TICKER_HISTORY)
-                playerTickerHistory.pop();
-            playerBuffer = "";
-        }
-        if (playerBuffer.length > MAX_WORD_LENGTH) {
-            playerBuffer = playerBuffer.slice(-MAX_WORD_LENGTH);
-        }
-    }
-    if (playerDisplayChars.length > MAX_DISPLAY_CHARS) {
-        playerDisplayChars = playerDisplayChars.slice(-MAX_DISPLAY_CHARS);
     }
 }
 // --------------- Formatting ---------------
@@ -224,47 +200,70 @@ function renderStats() {
         comboEl.classList.remove("combo-active");
     }
 }
-function renderPlayerTicker() {
-    const output = getEl("player-output");
-    output.textContent = playerDisplayChars || "(click to start typing)";
-    const wordsList = getEl("player-words");
-    wordsList.innerHTML = "";
-    for (const entry of playerTickerHistory) {
-        const div = document.createElement("div");
-        div.className = "ticker-word-entry";
-        div.textContent = entry;
-        wordsList.appendChild(div);
+// --------------- Word Float Animations ---------------
+function flushWordFloats() {
+    for (const evt of pendingWordFloats) {
+        const headerEl = document.getElementById("monkey-header-" + evt.monkeyId);
+        if (!headerEl)
+            continue;
+        const floater = document.createElement("span");
+        floater.className = "word-floater";
+        floater.textContent = evt.word + " +" + evt.bonus.toString();
+        headerEl.appendChild(floater);
+        floater.addEventListener("animationend", () => floater.remove(), { once: true });
     }
+    pendingWordFloats.length = 0;
 }
 function renderMonkeyTickers() {
     const container = getEl("monkey-tickers-list");
-    if (monkeys.length === 0) {
-        container.innerHTML = '<p class="no-monkeys">Hire your first monkey to see them type!</p>';
-        return;
-    }
-    // Remove placeholder text
+    // Remove placeholder text if present
     const placeholder = container.querySelector(".no-monkeys");
-    if (placeholder)
+    if (placeholder && monkeys.length > 0)
         placeholder.remove();
     // Create or update monkey ticker elements
     for (const monkey of monkeys) {
         let el = document.getElementById("monkey-ticker-" + monkey.id);
         if (!el) {
+            // Build the ticker structure once; only update inner content each tick
             el = document.createElement("div");
             el.id = "monkey-ticker-" + monkey.id;
             el.className = "monkey-ticker";
+            const header = document.createElement("div");
+            header.id = "monkey-header-" + monkey.id;
+            header.className = "monkey-ticker-header";
+            const nameSpan = document.createElement("span");
+            nameSpan.className = "monkey-name";
+            nameSpan.textContent = monkey.name;
+            const lpsSpan = document.createElement("span");
+            lpsSpan.className = "monkey-lps";
+            header.appendChild(nameSpan);
+            header.appendChild(lpsSpan);
+            const charsDiv = document.createElement("div");
+            charsDiv.id = "monkey-chars-" + monkey.id;
+            charsDiv.className = "monkey-chars";
+            el.appendChild(header);
+            el.appendChild(charsDiv);
             container.appendChild(el);
         }
-        const lps = getMonkeyLPS(monkey);
-        el.innerHTML =
-            '<div class="monkey-ticker-header">' +
-                '<span class="monkey-name">' + escapeHtml(monkey.name) + '</span>' +
-                '<span class="monkey-lps">' + formatNumber(lps) + ' LPS</span>' +
-                '</div>' +
-                '<div class="monkey-chars">' + escapeHtml(monkey.displayChars || "...") + '</div>' +
-                '<div class="monkey-words-list">' +
-                monkey.tickerHistory.map(w => '<div class="ticker-word-entry">' + escapeHtml(w) + '</div>').join('') +
-                '</div>';
+        // Update LPS display
+        const lpsSpan = el.querySelector(".monkey-lps");
+        if (lpsSpan)
+            lpsSpan.textContent = formatNumber(getMonkeyLPS(monkey)) + " LPS";
+        // Update monkey name (may change via individual upgrades panel)
+        const nameSpan = el.querySelector(".monkey-name");
+        if (nameSpan)
+            nameSpan.textContent = monkey.name;
+        // Render vertical receipt-paper chars: newest char at top, oldest at bottom
+        const charsDiv = document.getElementById("monkey-chars-" + monkey.id);
+        if (charsDiv) {
+            const chars = monkey.displayChars;
+            // Build reversed char list so newest is at top
+            const parts = [];
+            for (let i = chars.length - 1; i >= 0; i--) {
+                parts.push('<span class="ticker-char">' + escapeHtml(chars[i]) + '</span>');
+            }
+            charsDiv.innerHTML = parts.join('');
+        }
     }
     // Remove tickers for monkeys that no longer exist
     const existingTickers = container.querySelectorAll(".monkey-ticker");
@@ -274,13 +273,14 @@ function renderMonkeyTickers() {
             ticker.remove();
         }
     });
+    // Flush queued word float animations
+    flushWordFloats();
 }
 function escapeHtml(s) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function renderUpgrades() {
     renderGlobalUpgrades();
-    renderClickUpgrades();
     renderIndividualUpgrades();
 }
 function renderGlobalUpgrades() {
@@ -301,32 +301,6 @@ function renderGlobalUpgrades() {
                 '<div class="upgrade-cost">Cost: ' + formatBigInt(cost) + '</div>' +
                 '<div class="upgrade-owned">Owned: ' + level + '</div>';
         btn.addEventListener("click", () => purchaseGlobalUpgrade(id));
-        container.appendChild(btn);
-    }
-}
-function renderClickUpgrades() {
-    const container = getEl("tab-click");
-    container.innerHTML = "";
-    // Show current click power
-    const info = document.createElement("div");
-    info.className = "click-power-info";
-    info.textContent = "Current click power: " + getClickPower() + " chars/click";
-    container.appendChild(info);
-    for (const [id, def] of Object.entries(CLICK_UPGRADES)) {
-        const level = clickUpgrades[id] || 0;
-        const cost = getUpgradeCost(CLICK_UPGRADES, id, level);
-        const canAfford = bananas >= cost;
-        const btn = document.createElement("button");
-        btn.className = "upgrade-btn" + (canAfford ? "" : " disabled");
-        btn.disabled = !canAfford;
-        btn.innerHTML =
-            '<div class="upgrade-info">' +
-                '<span class="upgrade-name">' + def.name + '</span>' +
-                '<span class="upgrade-desc">' + def.desc + '</span>' +
-                '</div>' +
-                '<div class="upgrade-cost">Cost: ' + formatBigInt(cost) + '</div>' +
-                '<div class="upgrade-owned">Owned: ' + level + '</div>';
-        btn.addEventListener("click", () => purchaseClickUpgrade(id));
         container.appendChild(btn);
     }
 }
@@ -404,7 +378,6 @@ function renderWordDiscovery() {
 }
 function renderAll() {
     renderStats();
-    renderPlayerTicker();
     renderMonkeyTickers();
     renderUpgrades();
     renderWordDiscovery();
@@ -434,19 +407,6 @@ function purchaseGlobalUpgrade(id) {
     }
     renderAll();
 }
-function purchaseClickUpgrade(id) {
-    const level = clickUpgrades[id] || 0;
-    const cost = getUpgradeCost(CLICK_UPGRADES, id, level);
-    if (bananas < cost)
-        return;
-    bananas -= cost;
-    clickUpgrades[id] = level + 1;
-    // Update click button text
-    const sub = document.querySelector("#click-btn .btn-sub");
-    if (sub)
-        sub.textContent = "+" + getClickPower() + " letters per click";
-    renderAll();
-}
 function purchaseMonkeyUpgrade(monkeyId, upgradeId) {
     const monkey = monkeys.find(m => m.id === monkeyId);
     if (!monkey)
@@ -460,11 +420,6 @@ function purchaseMonkeyUpgrade(monkeyId, upgradeId) {
         monkey.speedLevel++;
     else
         monkey.bonusLevel++;
-    renderAll();
-}
-// --------------- Click Handler ---------------
-function handleClick() {
-    generateCharsForPlayer(getClickPower());
     renderAll();
 }
 // --------------- Tab Management ---------------
@@ -484,11 +439,7 @@ function serialize() {
         bananas: bananas.toString(),
         totalLetters: totalLetters.toString(),
         globalUpgrades: { ...globalUpgrades },
-        clickUpgrades: { ...clickUpgrades },
         monkeys: monkeys.map(m => ({ ...m, tickerHistory: [...m.tickerHistory] })),
-        playerBuffer,
-        playerDisplayChars,
-        playerTickerHistory: [...playerTickerHistory],
         recentWords: [...recentWords],
         wordCounts: { ...wordCounts },
         totalWordsFound,
@@ -516,7 +467,6 @@ function loadGame() {
         bananas = BigInt(save.bananas || "0");
         totalLetters = BigInt(save.totalLetters || "0");
         globalUpgrades = { monkey: 0, typewriter: 0, training: 0, quill: 0, ...(save.globalUpgrades || {}) };
-        clickUpgrades = { power: 0, multiplier: 0, ...(save.clickUpgrades || {}) };
         if (Array.isArray(save.monkeys)) {
             monkeys = save.monkeys.map(m => ({
                 id: m.id ?? 0,
@@ -533,9 +483,6 @@ function loadGame() {
             monkeys = [];
         }
         monkeyCharAccumulators = monkeys.map(() => 0);
-        playerBuffer = save.playerBuffer ?? "";
-        playerDisplayChars = save.playerDisplayChars ?? "";
-        playerTickerHistory = Array.isArray(save.playerTickerHistory) ? save.playerTickerHistory.slice(0, MAX_TICKER_HISTORY) : [];
         recentWords = Array.isArray(save.recentWords) ? save.recentWords : [];
         wordCounts = (typeof save.wordCounts === "object" && save.wordCounts !== null) ? save.wordCounts : {};
         totalWordsFound = save.totalWordsFound ?? 0;
@@ -548,18 +495,30 @@ function loadGame() {
         return false;
     }
 }
+function addStartingMonkey() {
+    const newId = 1;
+    monkeys.push({
+        id: newId,
+        name: MONKEY_NAMES[0],
+        buffer: "",
+        displayChars: "",
+        tickerHistory: [],
+        wordsFound: 0,
+        speedLevel: 0,
+        bonusLevel: 0,
+    });
+    monkeyCharAccumulators.push(0);
+    // Count the starting monkey in globalUpgrades so the purchase counter is consistent
+    globalUpgrades.monkey = 1;
+}
 function resetGame() {
     if (confirm("Are you sure you want to reset all progress?")) {
         localStorage.removeItem(SAVE_KEY);
         bananas = 0n;
         totalLetters = 0n;
         globalUpgrades = { monkey: 0, typewriter: 0, training: 0, quill: 0 };
-        clickUpgrades = { power: 0, multiplier: 0 };
         monkeys = [];
         monkeyCharAccumulators = [];
-        playerBuffer = "";
-        playerDisplayChars = "";
-        playerTickerHistory = [];
         recentWords = [];
         wordCounts = {};
         totalWordsFound = 0;
@@ -568,6 +527,8 @@ function resetGame() {
         lastSaveTime = Date.now();
         // Clear monkey ticker DOM
         getEl("monkey-tickers-list").innerHTML = "";
+        // Give the player their starting monkey back
+        addStartingMonkey();
         renderAll();
     }
 }
@@ -586,12 +547,10 @@ function handleOfflineProgress() {
     // Award bananas for characters
     bananas += BigInt(offlineChars);
     totalLetters += BigInt(offlineChars);
-    // Estimate words found offline based on average word rate
-    // Average word length ~4.5, probability of random word ≈ words_in_dict / 26^avg_len
-    // Simplified: estimate ~1 word per 5000 chars as a rough heuristic
+    // Estimate words found offline (~1 per 5000 chars heuristic)
     const estimatedWords = Math.floor(offlineChars / 5000);
     if (estimatedWords > 0) {
-        const avgBonus = 16; // average ~4-letter word bonus
+        const avgBonus = 16;
         bananas += BigInt(estimatedWords * avgBonus);
         totalWordsFound += estimatedWords;
     }
@@ -619,7 +578,6 @@ function gameTick() {
         }
     }
     renderStats();
-    renderPlayerTicker();
     renderMonkeyTickers();
     // Only re-render upgrades occasionally to save performance (every ~500ms = every 5 ticks)
     if (tickCount % 5 === 0) {
@@ -657,16 +615,14 @@ function handleVisibilityChange() {
 // --------------- Initialization ---------------
 function init() {
     const loaded = loadGame();
+    // New game or save with no monkeys: give the player their first monkey automatically
+    if (monkeys.length === 0) {
+        addStartingMonkey();
+    }
     if (loaded) {
         handleOfflineProgress();
     }
     renderAll();
-    // Click button
-    getEl("click-btn").addEventListener("click", handleClick);
-    // Update click button text
-    const sub = document.querySelector("#click-btn .btn-sub");
-    if (sub)
-        sub.textContent = "+" + getClickPower() + " letters per click";
     // Tab buttons
     document.querySelectorAll(".tab-btn").forEach(btn => {
         btn.addEventListener("click", () => {
