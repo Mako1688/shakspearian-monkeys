@@ -601,10 +601,12 @@ function handleOfflineProgress() {
 }
 // --------------- Game Loop ---------------
 let lastTickTime = Date.now();
+let tickCount = 0;
 function gameTick() {
     const now = Date.now();
     const dt = Math.min(now - lastTickTime, 1000); // cap delta to 1 second
     lastTickTime = now;
+    tickCount++;
     const dtSec = dt / 1000;
     for (let i = 0; i < monkeys.length; i++) {
         const monkey = monkeys[i];
@@ -619,8 +621,8 @@ function gameTick() {
     renderStats();
     renderPlayerTicker();
     renderMonkeyTickers();
-    // Only re-render upgrades occasionally to save performance (every 500ms)
-    if (now % 500 < TICK_INTERVAL_MS) {
+    // Only re-render upgrades occasionally to save performance (every ~500ms = every 5 ticks)
+    if (tickCount % 5 === 0) {
         renderUpgrades();
         renderWordDiscovery();
     }
