@@ -338,9 +338,6 @@ function renderMonkeyTickers() {
     // Flush queued word float animations
     flushWordFloats();
 }
-function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 function renderUpgrades() {
     renderGlobalUpgrades();
     renderIndividualUpgrades();
@@ -684,6 +681,7 @@ function tryGenerateSentence() {
     sentences.unshift('"' + sentence + '" (+' + formatBigInt(bonus) + ')');
     if (sentences.length > MAX_SENTENCES)
         sentences.pop();
+    wordDiscoveryDirty = true;
 }
 let lastTickTime = Date.now();
 let tickCount = 0;

@@ -447,10 +447,6 @@ function renderMonkeyTickers(): void {
   flushWordFloats();
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
 function renderUpgrades(): void {
   renderGlobalUpgrades();
   renderIndividualUpgrades();
@@ -836,6 +832,7 @@ function tryGenerateSentence(): void {
 
   sentences.unshift('"' + sentence + '" (+' + formatBigInt(bonus) + ')');
   if (sentences.length > MAX_SENTENCES) sentences.pop();
+  wordDiscoveryDirty = true;
 }
 
 let lastTickTime = Date.now();
