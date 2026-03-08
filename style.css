@@ -400,6 +400,24 @@ footer button:hover {
   .upgrade-owned {
     text-align: left;
   }
+
+  .monkey-ticker {
+    padding: 0.45rem 0.5rem;
+  }
+
+  .ticker-display {
+    font-size: 0.72rem;
+  }
+
+  .tier-badge {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.35rem;
+  }
+
+  .monkey-label,
+  .monkey-progress {
+    font-size: 0.65rem;
+  }
 }
 
 @media (min-width: 768px) {
@@ -414,6 +432,15 @@ footer button:hover {
   #typewriter-output {
     min-height: 120px;
     max-height: 200px;
+  }
+
+  #monkeys-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .monkeys-more {
+    grid-column: 1 / -1;
   }
 }
 
