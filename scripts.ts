@@ -13,8 +13,7 @@ const TICK_INTERVAL_MS = 100; // 10 ticks per second
 const MAX_WORD_LENGTH = 10;
 const MIN_WORD_LENGTH = 3;
 const COMBO_WINDOW_MS = 3000; // 3 seconds for combo
-const MAX_TICKER_HISTORY = 20; // recent words per monkey ticker
-const MAX_DISPLAY_CHARS = 80; // chars to keep in vertical receipt
+const MAX_DISPLAY_CHARS = 30; // chars to keep in vertical receipt
 const MAX_RECENT_WORDS = 10;
 const MAX_LPS_PER_MONKEY = 200; // hard cap to prevent browser hangs
 
@@ -43,7 +42,7 @@ const MONKEY_NAMES = [
   "Hermia", "Demetrius", "Malvolio", "Feste", "Touchstone",
   "Jaques", "Orlando", "Celia", "Bianca", "Cassio",
   "Desdemona", "Emilia", "Iago", "Banquo", "Duncan",
-];
+] as const;
 
 // --------------- Upgrade Definitions ---------------
 
@@ -55,18 +54,58 @@ interface UpgradeDef {
 }
 
 // Costs are much higher and scaling is steeper to prevent runaway progression.
-// Training gives +1.5x (not 2x) per level; Quill gives +3x (not 10x).
+// Hire Monkey: 50 base, 1.55x; Better Typewriters: 750 base, 1.75x
+// Monkey Training: 8000 base, 2.50x; Golden Quill: 150000 base, 4.00x
 const GLOBAL_UPGRADES: Record<string, UpgradeDef> = {
-  monkey:     { name: "Hire Monkey",        desc: "+1 new monkey typist",          baseCost: 15n,    costMult: 1.50 },
-  typewriter: { name: "Better Typewriters",  desc: "+1 LPS per monkey",            baseCost: 250n,   costMult: 1.65 },
-  training:   { name: "Monkey Training",     desc: "1.5x LPS multiplier (all)",    baseCost: 2000n,  costMult: 2.20 },
-  quill:      { name: "Golden Quill",        desc: "3x LPS multiplier (all)",      baseCost: 40000n, costMult: 3.50 },
+  monkey:     { name: "Hire Monkey",        desc: "+1 new monkey typist",          baseCost: 50n,     costMult: 1.55 },
+  typewriter: { name: "Better Typewriters",  desc: "+1 LPS per monkey",            baseCost: 750n,    costMult: 1.75 },
+  training:   { name: "Monkey Training",     desc: "1.5x LPS multiplier (all)",    baseCost: 8000n,   costMult: 2.50 },
+  quill:      { name: "Golden Quill",        desc: "3x LPS multiplier (all)",      baseCost: 150000n, costMult: 4.00 },
 };
 
 const MONKEY_UPGRADE_DEFS: Record<string, UpgradeDef> = {
-  speed: { name: "Speed Boost",  desc: "+1 LPS for this monkey", baseCost: 40n,  costMult: 1.45 },
-  bonus: { name: "Word Mastery", desc: "1.5x word bonus",        baseCost: 200n, costMult: 1.65 },
+  speed: { name: "Speed Boost",  desc: "+1 LPS for this monkey", baseCost: 120n, costMult: 1.55 },
+  bonus: { name: "Word Mastery", desc: "1.5x word bonus",        baseCost: 600n, costMult: 1.80 },
 };
+
+/** Bonus multiplier tiers for word length — longer words get progressively larger rewards */
+const WORD_LENGTH_TIERS: Record<number, { label: string; multiplier: number }> = {
+  3: { label: "Common", multiplier: 1.0 },
+  4: { label: "Adept", multiplier: 1.2 },
+  5: { label: "Skilled", multiplier: 1.5 },
+  6: { label: "Expert", multiplier: 2.0 },
+  7: { label: "Master", multiplier: 3.0 },
+  8: { label: "Legendary", multiplier: 5.0 },
+  9: { label: "Mythical", multiplier: 8.0 },
+  10: { label: "Shakespearian", multiplier: 12.0 },
+};
+
+interface WordMilestone {
+  threshold: number;
+  reward: bigint;
+  label: string;
+}
+
+const WORD_MILESTONES: WordMilestone[] = [
+  { threshold: 10, reward: 500n, label: "Novice Lexicon" },
+  { threshold: 25, reward: 2000n, label: "Budding Vocabulary" },
+  { threshold: 50, reward: 10000n, label: "Wordsmith" },
+  { threshold: 100, reward: 50000n, label: "Linguist" },
+  { threshold: 200, reward: 250000n, label: "Scholar" },
+  { threshold: 500, reward: 1000000n, label: "Bard" },
+  { threshold: 1000, reward: 10000000n, label: "Shakespeare" },
+];
+
+const SENTENCE_TEMPLATES = [
+  ["the", "*", "is", "*"],
+  ["a", "*", "and", "a", "*"],
+  ["*", "the", "*"],
+  ["my", "*", "has", "*"],
+  ["the", "*", "of", "*"],
+];
+const MIN_WORDS_FOR_SENTENCE = 5;
+const SENTENCE_CHECK_INTERVAL = 50; // check every 50 ticks
+const SENTENCE_BONUS_BASE = 500n;
 
 // --------------- State Types ---------------
 
@@ -75,7 +114,6 @@ interface MonkeyData {
   name: string;
   buffer: string;
   displayChars: string;
-  tickerHistory: string[]; // recent words, capped at MAX_TICKER_HISTORY
   wordsFound: number;
   speedLevel: number;
   bonusLevel: number;
@@ -92,6 +130,8 @@ interface SaveState {
   lastWordTime: number;
   comboCount: number;
   lastSaveTime: number;
+  claimedMilestones: number[];
+  sentences: string[];
 }
 
 // --------------- Runtime State ---------------
@@ -115,6 +155,19 @@ let activeTab = "global";
 
 // Accumulator for fractional chars per monkey per tick
 let monkeyCharAccumulators: number[] = [];
+
+// Stable DOM-diffing for ticker chars
+const lastRenderedCharCount = new Map<number, number>();
+
+// Dirty flag for word discovery rendering
+let wordDiscoveryDirty = true;
+
+// Milestone tracking
+let claimedMilestones: Set<number> = new Set();
+
+// Sentence generation state
+let sentences: string[] = [];
+const MAX_SENTENCES = 5;
 
 // --------------- Derived Values ---------------
 
@@ -144,6 +197,10 @@ function getTotalLPS(): number {
 function getWordBonus(word: string, monkey?: MonkeyData): bigint {
   let bonus = BigInt(word.length * word.length);
 
+  // Word length tier bonus
+  const tier = WORD_LENGTH_TIERS[word.length] ?? WORD_LENGTH_TIERS[3];
+  bonus = BigInt(Math.floor(Number(bonus) * tier.multiplier));
+
   // Per-monkey bonus
   if (monkey && monkey.bonusLevel > 0) {
     const mult = Math.pow(1.5, monkey.bonusLevel);
@@ -165,6 +222,16 @@ function getWordBonus(word: string, monkey?: MonkeyData): bigint {
   }
 
   return bonus;
+}
+
+function checkWordMilestones(): void {
+  const uniqueCount = Object.keys(wordCounts).length;
+  for (const milestone of WORD_MILESTONES) {
+    if (uniqueCount >= milestone.threshold && !claimedMilestones.has(milestone.threshold)) {
+      claimedMilestones.add(milestone.threshold);
+      bananas += milestone.reward;
+    }
+  }
 }
 
 // --------------- Word Detection ---------------
@@ -207,8 +274,8 @@ function generateCharsForMonkey(monkey: MonkeyData, amount: number): void {
       recentWords.unshift(result.word);
       if (recentWords.length > MAX_RECENT_WORDS) recentWords.pop();
 
-      monkey.tickerHistory.unshift(result.word + " (+" + result.bonus.toString() + ")");
-      if (monkey.tickerHistory.length > MAX_TICKER_HISTORY) monkey.tickerHistory.pop();
+      checkWordMilestones();
+      wordDiscoveryDirty = true;
 
       // Queue a float animation for the render cycle
       pendingWordFloats.push({ monkeyId: monkey.id, word: result.word, bonus: result.bonus });
@@ -343,12 +410,27 @@ function renderMonkeyTickers(): void {
     const charsDiv = document.getElementById("monkey-chars-" + monkey.id);
     if (charsDiv) {
       const chars = monkey.displayChars;
-      // Build reversed char list so newest is at top
-      const parts: string[] = [];
-      for (let i = chars.length - 1; i >= 0; i--) {
-        parts.push('<span class="ticker-char">' + escapeHtml(chars[i]) + '</span>');
+      const prevLen = lastRenderedCharCount.get(monkey.id) ?? 0;
+      const newLen = chars.length;
+
+      // Only update if chars changed
+      if (newLen !== prevLen) {
+        // Add new chars at the top (newest first)
+        const newChars = newLen > prevLen ? chars.slice(prevLen) : '';
+        for (let i = newChars.length - 1; i >= 0; i--) {
+          const span = document.createElement('span');
+          span.className = 'ticker-char';
+          span.textContent = newChars[i];
+          charsDiv.insertBefore(span, charsDiv.firstChild);
+        }
+
+        // Remove excess children from bottom (oldest) to keep at MAX_DISPLAY_CHARS
+        while (charsDiv.children.length > MAX_DISPLAY_CHARS) {
+          charsDiv.removeChild(charsDiv.lastChild!);
+        }
+
+        lastRenderedCharCount.set(monkey.id, newLen);
       }
-      charsDiv.innerHTML = parts.join('');
     }
   }
 
@@ -457,6 +539,9 @@ function renderIndividualUpgrades(): void {
 }
 
 function renderWordDiscovery(): void {
+  if (!wordDiscoveryDirty) return;
+  wordDiscoveryDirty = false;
+
   const list = getEl("recent-words-list");
   list.innerHTML = "";
   for (const word of recentWords) {
@@ -480,6 +565,36 @@ function renderWordDiscovery(): void {
     : "None yet";
 
   getEl("unique-words-count").textContent = Object.keys(wordCounts).length.toString();
+
+  renderMilestones();
+  renderSentences();
+}
+
+function renderMilestones(): void {
+  const container = document.getElementById("word-milestones-list");
+  if (!container) return;
+  container.innerHTML = "";
+  const uniqueCount = Object.keys(wordCounts).length;
+  for (const ms of WORD_MILESTONES) {
+    const div = document.createElement("div");
+    div.className = "word-entry";
+    const claimed = claimedMilestones.has(ms.threshold);
+    const progress = Math.min(uniqueCount, ms.threshold);
+    div.textContent = (claimed ? "[x] " : "[ ] ") + ms.label + " (" + progress + "/" + ms.threshold + ") — " + formatBigInt(ms.reward) + " bananas";
+    container.appendChild(div);
+  }
+}
+
+function renderSentences(): void {
+  const container = document.getElementById("sentence-list");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const s of sentences) {
+    const div = document.createElement("div");
+    div.className = "word-entry";
+    div.textContent = s;
+    container.appendChild(div);
+  }
 }
 
 function renderAll(): void {
@@ -507,7 +622,6 @@ function purchaseGlobalUpgrade(id: string): void {
       name: MONKEY_NAMES[nameIndex],
       buffer: "",
       displayChars: "",
-      tickerHistory: [],
       wordsFound: 0,
       speedLevel: 0,
       bonusLevel: 0,
@@ -556,13 +670,15 @@ function serialize(): string {
     bananas: bananas.toString(),
     totalLetters: totalLetters.toString(),
     globalUpgrades: { ...globalUpgrades },
-    monkeys: monkeys.map(m => ({ ...m, tickerHistory: [...m.tickerHistory] })),
+    monkeys: monkeys.map(m => ({ ...m })),
     recentWords: [...recentWords],
     wordCounts: { ...wordCounts },
     totalWordsFound,
     lastWordTime,
     comboCount,
     lastSaveTime: Date.now(),
+    claimedMilestones: [...claimedMilestones],
+    sentences: [...sentences],
   };
   return JSON.stringify(save);
 }
@@ -593,7 +709,6 @@ function loadGame(): boolean {
         name: m.name ?? "Monkey",
         buffer: m.buffer ?? "",
         displayChars: m.displayChars ?? "",
-        tickerHistory: Array.isArray(m.tickerHistory) ? m.tickerHistory.slice(0, MAX_TICKER_HISTORY) : [],
         wordsFound: m.wordsFound ?? 0,
         speedLevel: m.speedLevel ?? 0,
         bonusLevel: m.bonusLevel ?? 0,
@@ -609,6 +724,9 @@ function loadGame(): boolean {
     lastWordTime = save.lastWordTime ?? 0;
     comboCount = save.comboCount ?? 0;
     lastSaveTime = save.lastSaveTime ?? Date.now();
+    claimedMilestones = new Set(Array.isArray(save.claimedMilestones) ? save.claimedMilestones : []);
+    sentences = Array.isArray(save.sentences) ? save.sentences : [];
+    wordDiscoveryDirty = true;
 
     return true;
   } catch {
@@ -623,7 +741,6 @@ function addStartingMonkey(): void {
     name: MONKEY_NAMES[0],
     buffer: "",
     displayChars: "",
-    tickerHistory: [],
     wordsFound: 0,
     speedLevel: 0,
     bonusLevel: 0,
@@ -647,6 +764,10 @@ function resetGame(): void {
     lastWordTime = 0;
     comboCount = 0;
     lastSaveTime = Date.now();
+    lastRenderedCharCount.clear();
+    wordDiscoveryDirty = true;
+    claimedMilestones = new Set();
+    sentences = [];
 
     // Clear monkey ticker DOM
     getEl("monkey-tickers-list").innerHTML = "";
@@ -690,6 +811,32 @@ function handleOfflineProgress(): void {
 
 // --------------- Game Loop ---------------
 
+function tryGenerateSentence(): void {
+  const discoveredWords = Object.keys(wordCounts);
+  if (discoveredWords.length < MIN_WORDS_FOR_SENTENCE) return;
+
+  const template = SENTENCE_TEMPLATES[Math.floor(Math.random() * SENTENCE_TEMPLATES.length)];
+  const fillerWords = discoveredWords.filter(w => w.length >= 3);
+  if (fillerWords.length < 2) return;
+
+  const parts: string[] = [];
+  for (const token of template) {
+    if (token === "*") {
+      parts.push(fillerWords[Math.floor(Math.random() * fillerWords.length)]);
+    } else {
+      parts.push(token);
+    }
+  }
+  const sentence = parts.join(" ");
+
+  const wordCount = parts.filter(p => p !== "*").length;
+  const bonus = BigInt(wordCount) * SENTENCE_BONUS_BASE;
+  bananas += bonus;
+
+  sentences.unshift('"' + sentence + '" (+' + formatBigInt(bonus) + ')');
+  if (sentences.length > MAX_SENTENCES) sentences.pop();
+}
+
 let lastTickTime = Date.now();
 let tickCount = 0;
 
@@ -715,6 +862,10 @@ function gameTick(): void {
 
   renderStats();
   renderMonkeyTickers();
+
+  if (tickCount % SENTENCE_CHECK_INTERVAL === 0) {
+    tryGenerateSentence();
+  }
 
   // Only re-render upgrades occasionally to save performance (every ~500ms = every 5 ticks)
   if (tickCount % 5 === 0) {
