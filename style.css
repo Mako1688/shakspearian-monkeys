@@ -79,8 +79,8 @@ header h1 {
 
 #monkey-tickers-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 0.5rem;
   align-items: start;
 }
 
@@ -95,7 +95,7 @@ header h1 {
   position: relative;
   width: 100%;
   text-align: center;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.15rem;
 }
 
 .monkey-name {
@@ -112,14 +112,14 @@ header h1 {
 /* Receipt-paper vertical character stream */
 .monkey-chars {
   width: 100%;
-  max-height: 400px;
+  max-height: 120px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
   font-family: "Courier New", Courier, monospace;
-  font-size: 0.9rem;
-  line-height: 1.4;
+  font-size: 0.75rem;
+  line-height: 1.2;
 }
 
 .ticker-char {
@@ -356,6 +356,20 @@ footer button {
   font-family: inherit;
 }
 
+/* --- Sentence note --- */
+.sentence-note {
+  font-size: 0.7rem;
+  font-style: italic;
+  margin-bottom: 0.2rem;
+}
+
+/* --- Milestones --- */
+#word-milestones-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
 /* --- Responsive --- */
 @media (max-width: 480px) {
   html {
@@ -367,7 +381,7 @@ footer button {
   }
 
   #monkey-tickers-list {
-    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   }
 
   .upgrade-btn {
