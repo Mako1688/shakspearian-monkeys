@@ -387,10 +387,6 @@ function buildMonkeyTickers(): void {
 
   const visible = state.monkeys.slice(0, MAX_VISIBLE_TICKERS);
   for (const monkey of visible) {
-    const tierMax = monkey.tier < 2
-      ? String(WORDS_TO_NEXT_TIER[monkey.tier])
-      : "MAX";
-
     const el = document.createElement("div");
     el.className = "monkey-ticker";
     el.id = `monkey-ticker-${monkey.id}`;
@@ -410,7 +406,7 @@ function buildMonkeyTickers(): void {
     const progress = document.createElement("span");
     progress.className = "monkey-progress";
     progress.textContent = monkey.tier < 2
-      ? `${monkey.wordsFound}/${tierMax} words`
+      ? `${monkey.wordsFound}/${WORDS_TO_NEXT_TIER[monkey.tier]} words`
       : `✅ MAX`;
 
     header.appendChild(badge);
