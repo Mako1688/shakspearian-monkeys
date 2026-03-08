@@ -129,7 +129,7 @@ function getTotalLPS() {
 function getWordBonus(word, monkey) {
     let bonus = BigInt(word.length * word.length);
     // Word length tier bonus (words outside 3-10 range default to Common tier)
-    const tier = WORD_LENGTH_TIERS[word.length] ?? WORD_LENGTH_TIERS[3];
+    const tier = WORD_LENGTH_TIERS[word.length] ?? WORD_LENGTH_TIERS[MIN_WORD_LENGTH];
     bonus = BigInt(Math.floor(Number(bonus) * tier.multiplier));
     // Per-monkey bonus
     if (monkey && monkey.bonusLevel > 0) {
@@ -661,7 +661,7 @@ function tryGenerateSentence() {
     if (discoveredWords.length < MIN_WORDS_FOR_SENTENCE)
         return;
     const template = SENTENCE_TEMPLATES[Math.floor(Math.random() * SENTENCE_TEMPLATES.length)];
-    const fillerWords = discoveredWords.filter(w => w.length >= 3);
+    const fillerWords = discoveredWords.filter(w => w.length >= MIN_WORD_LENGTH);
     if (fillerWords.length < 2)
         return;
     const parts = [];
@@ -674,7 +674,7 @@ function tryGenerateSentence() {
         }
     }
     const sentence = parts.join(" ");
-    // All "*" tokens have been replaced, so parts.length is the total word count
+    // Bonus scales with total word count in the generated sentence
     const wordCount = parts.length;
     const bonus = BigInt(wordCount) * SENTENCE_BONUS_BASE;
     bananas += bonus;
