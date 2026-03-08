@@ -115,39 +115,19 @@ header h1 {
   white-space: pre-wrap;
 }
 
-#quote-progress {
+#buffer-display {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-top: 0.5rem;
   font-size: 0.8rem;
-}
-
-#quote-label {
-  white-space: nowrap;
   color: var(--text-dim);
 }
 
-#progress-bar-container {
-  flex: 1;
-  height: 10px;
-  background: #0d1117;
-  border-radius: 5px;
-  overflow: hidden;
-}
-
-#progress-bar {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, var(--accent), var(--gold));
-  border-radius: 5px;
-  transition: width 0.3s ease;
-}
-
-#progress-text {
-  min-width: 2.5rem;
-  text-align: right;
+#current-buffer {
+  font-family: "Courier New", Courier, monospace;
   color: var(--gold);
+  font-weight: 600;
 }
 
 /* --- Click Button --- */
@@ -264,50 +244,46 @@ header h1 {
   white-space: nowrap;
 }
 
-/* --- Achievements --- */
-#achievements-section h2 {
+/* --- Word Discovery --- */
+#word-discovery-section h2 {
   font-size: 1.1rem;
   margin-bottom: 0.5rem;
 }
 
-#achievements-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+#word-discovery-section h3 {
+  font-size: 0.95rem;
+  margin: 0.5rem 0 0.3rem;
+  color: var(--text-dim);
 }
 
-.cycle-header {
-  font-size: 0.8rem;
-  color: var(--gold);
-  margin: 0 0 0.3rem;
-  font-style: italic;
-}
-
-.achievement {
+.word-discovery-stats {
   background: var(--bg-card);
   border-radius: 8px;
   padding: 0.6rem 0.8rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.achievement.completed {
-  border-left: 3px solid var(--gold);
-}
-
-.achievement.locked {
-  opacity: 0.5;
-}
-
-.achievement-name {
+.word-discovery-stats span {
+  color: var(--gold);
   font-weight: 600;
 }
 
-.achievement-status {
-  color: var(--gold);
-  font-size: 0.8rem;
+#recent-words-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.word-entry {
+  background: var(--bg-card);
+  border-radius: 8px;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.85rem;
+  border-left: 3px solid var(--gold);
+  font-family: "Courier New", Courier, monospace;
 }
 
 /* --- Footer --- */
