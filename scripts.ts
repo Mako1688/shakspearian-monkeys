@@ -2,715 +2,837 @@
    Shakespearian Monkeys – Game Logic
    ============================================ */
 
+import { WORD_SET } from './words.js';
+
 // --------------- Constants & Types ---------------
 
 const SAVE_KEY = "shakespearian-monkeys-save";
 const AUTO_SAVE_INTERVAL_MS = 30_000;
 const TICK_INTERVAL_MS = 100; // 10 ticks per second
 
-const MAX_WORD_LENGTH = 8;
+const MAX_WORD_LENGTH = 10;
 const MIN_WORD_LENGTH = 3;
+const COMBO_WINDOW_MS = 3000; // 3 seconds for combo
+const MAX_TICKER_HISTORY = 12;
+const MAX_DISPLAY_CHARS = 60;
+const MAX_RECENT_WORDS = 10;
+
+const MONKEY_NAMES = [
+  "Hamlet", "Othello", "Macbeth", "Prospero", "Oberon",
+  "Puck", "Ariel", "Caliban", "Romeo", "Juliet",
+  "Portia", "Viola", "Rosalind", "Titania", "Bottom",
+  "Falstaff", "Lear", "Cordelia", "Edgar", "Kent",
+  "Horatio", "Ophelia", "Claudius", "Mercutio", "Benvolio",
+  "Tybalt", "Shylock", "Beatrice", "Benedick", "Petruchio",
+  "Miranda", "Sebastian", "Antonio", "Lysander", "Helena",
+  "Hermia", "Demetrius", "Malvolio", "Feste", "Touchstone",
+  "Jaques", "Orlando", "Celia", "Bianca", "Cassio",
+  "Desdemona", "Emilia", "Iago", "Banquo", "Duncan",
+];
+
+// --------------- Upgrade Definitions ---------------
 
 interface UpgradeDef {
-  baseCost: number;
-  costMultiplier: number;
-  lpsAdd: number;       // flat LPS added per unit
-  lpsMultiplier: number; // multiplicative bonus per unit
+  name: string;
+  desc: string;
+  baseCost: bigint;
+  costMult: number;
 }
 
-interface GameState {
-  bananas: number;
-  totalLetters: number;
-  clickPower: number;
-  upgrades: Record<UpgradeId, number>;
-  wordBuffer: string;
+const GLOBAL_UPGRADES: Record<string, UpgradeDef> = {
+  monkey:     { name: "Hire Monkey",        desc: "+1 new monkey typist",           baseCost: 10n,   costMult: 1.15 },
+  typewriter: { name: "Better Typewriters",  desc: "+1 LPS per monkey",             baseCost: 100n,  costMult: 1.30 },
+  training:   { name: "Monkey Training",     desc: "2x LPS multiplier (all)",       baseCost: 500n,  costMult: 1.50 },
+  quill:      { name: "Golden Quill",        desc: "10x LPS multiplier (all)",      baseCost: 5000n, costMult: 1.75 },
+};
+
+const CLICK_UPGRADES: Record<string, UpgradeDef> = {
+  power:      { name: "Quick Fingers",   desc: "+1 chars per click",    baseCost: 25n,  costMult: 1.20 },
+  multiplier: { name: "Double Tap",      desc: "2x click power",        baseCost: 200n, costMult: 1.50 },
+};
+
+const MONKEY_UPGRADE_DEFS: Record<string, UpgradeDef> = {
+  speed: { name: "Speed Boost",  desc: "+1 LPS for this monkey", baseCost: 20n,  costMult: 1.15 },
+  bonus: { name: "Word Mastery", desc: "1.5x word bonus",        baseCost: 100n, costMult: 1.30 },
+};
+
+// --------------- State Types ---------------
+
+interface MonkeyData {
+  id: number;
+  name: string;
+  buffer: string;
+  displayChars: string;
+  tickerHistory: string[]; // recent words, capped at MAX_TICKER_HISTORY
+  wordsFound: number;
+  speedLevel: number;
+  bonusLevel: number;
+}
+
+interface SaveState {
+  bananas: string;
+  totalLetters: string;
+  globalUpgrades: Record<string, number>;
+  clickUpgrades: Record<string, number>;
+  monkeys: MonkeyData[];
+  playerBuffer: string;
+  playerDisplayChars: string;
+  playerTickerHistory: string[];
   recentWords: string[];
   wordCounts: Record<string, number>;
   totalWordsFound: number;
+  lastWordTime: number;
+  comboCount: number;
   lastSaveTime: number;
 }
 
-type UpgradeId = "monkey" | "typewriter" | "training" | "quill";
+// --------------- Runtime State ---------------
 
-const UPGRADE_DEFS: Record<UpgradeId, UpgradeDef> = {
-  monkey:     { baseCost: 10,   costMultiplier: 1.15, lpsAdd: 1,  lpsMultiplier: 1 },
-  typewriter: { baseCost: 50,   costMultiplier: 1.25, lpsAdd: 5,  lpsMultiplier: 1 },
-  training:   { baseCost: 500,  costMultiplier: 1.50, lpsAdd: 0,  lpsMultiplier: 2 },
-  quill:      { baseCost: 5000, costMultiplier: 1.75, lpsAdd: 0,  lpsMultiplier: 10 },
-};
+let bananas: bigint = 0n;
+let totalLetters: bigint = 0n;
 
-// ~2900 common English words (3–8 letters, lowercase a-z only)
-const WORD_LIST: readonly string[] = [
-  // 3-letter words
-  "the","and","for","are","but","not","you","all","can","had","her","was","one",
-  "our","out","day","get","has","him","his","how","its","may","new","now","old",
-  "see","way","who","did","boy","got","let","say","she","too","use","dad","mom",
-  "run","big","end","far","few","own","put","red","sit","top","try","ask","ago",
-  "air","bad","bed","car","cut","dog","ear","eat","egg","eye","fly","fun","gun",
-  "hat","hit","hot","ice","ill","job","key","kid","lay","leg","lie","lip","lot",
-  "low","man","map","met","mix","net","nor","oil","pay","pen","per","pet",
-  "pin","pop","pot","raw","rid","row","sad","sat","sea","set","six","sky","son",
-  "sum","sun","ten","tie","tip","toe","two","van","war","wet","win","won","yes",
-  "yet","age","aid","aim","art","bag","ban","bar","bat","bay","bit","bow","box",
-  "bug","bus","buy","cap","cat","cop","cow","cry","cup","die","dig","dip","dot",
-  "dry","due","dug","fan","fat","fee","fit","fix","fog","gap","gas","god","guy",
-  "hey","hid","hip","hug","jaw","joy","lab","lap","led","log","mad","mud","nod",
-  "nut","odd","pad","pal","pan","pat","pig","pit","pub","rag","ran","rat","raw",
-  "ray","rib","rip","rob","rod","rot","rub","rug","sad","sag","sap","saw","sew",
-  "shy","sin","sip","sir","sob","sod","spy","tab","tag","tan","tap","tar","tax",
-  "tea","tin","ton","tub","tug","vet","vow","wag","web","wig","wit","woe","wok",
-  "yam","yap","yaw","zap","zen","zip","zoo",
-  // 4-letter words
-  "that","with","have","this","will","your","from","they","been","call","come",
-  "each","find","give","good","hand","help","here","home","just","keep","know",
-  "last","like","long","look","made","make","many","more","most","much","must",
-  "name","need","next","only","over","part","play","same","said","some","such",
-  "take","tell","than","them","then","time","very","want","well","what","when",
-  "wide","word","work","year","also","area","army","away","baby","back","ball",
-  "band","bank","base","bear","beat","bill","blue","boat","body","bomb","bond",
-  "bone","book","born","both","burn","busy","card","care","case","cast","cent",
-  "city","club","coat","code","cold","cook","cool","cope","copy","core","cost",
-  "crew","crop","dark","data","date","dead","deal","dear","deep","deny","diet",
-  "disk","does","done","door","down","draw","drew","drop","drug","dual","duke",
-  "dust","duty","earn","ease","east","easy","edge","else","even","ever","evil",
-  "exam","exec","exit","face","fact","fail","fair","fall","fame","farm","fast",
-  "fate","fear","feed","feel","feet","fell","file","fill","film","firm","fish",
-  "flat","flow","fold","folk","food","foot","form","four","free","fuel","full",
-  "fund","gain","game","gate","gave","gift","girl","glad","goal","goes","gold",
-  "golf","gone","grab","gray","grew","grow","gulf","hair","half","hall","hang",
-  "hard","harm","hate","head","hear","heat","held","hero","hide","high","hill",
-  "hire","hold","hole","host","hour","huge","hung","hunt","hurt","idea","inch",
-  "iron","item","jack","jean","join","joke","jump","jury","keen","kind","king",
-  "knee","knew","lack","laid","lake","land","lane","late","lead","left","lend",
-  "less","lift","line","link","list","live","load","loan","lock","lone","lord",
-  "lose","loss","lost","love","luck","lung","mail","main","male","mark","mass",
-  "mate","meal","mean","meat","meet","mile","milk","mind","mine","miss","mode",
-  "mood","moon","move","myth","nail","neat","neck","news","nice","nine","none",
-  "nose","note","odds","okay","once","open","pace","pack","page","paid","pain",
-  "pair","pale","palm","park","pass","past","path","peak","pick","pile","pink",
-  "pipe","plan","plot","plus","poem","poet","poll","pool","poor","port","post",
-  "pour","pray","pull","pure","push","quit","race","rage","rain","rank","rare",
-  "rate","read","real","rear","rely","rent","rest","rice","rich","ride","ring",
-  "rise","risk","road","rock","role","roll","roof","room","root","rope","rose",
-  "rule","rush","safe","sail","sake","sale","salt","sand","sang","save","seal",
-  "seat","seed","seek","seem","seen","self","sell","send","sept","ship","shop",
-  "shot","show","shut","sick","side","sign","silk","sing","site","size","skin",
-  "slip","slow","snap","snow","soft","soil","sold","sole","song","soon","sort",
-  "soul","span","spin","spot","star","stay","stem","step","stop","such","suit",
-  "sure","swim","tail","tale","talk","tall","tank","tape","task","taxi","team",
-  "tend","term","test","text","thin","thus","tied","till","tiny","tire","told",
-  "toll","tone","took","tool","tour","town","trap","tree","trim","trip","true",
-  "tube","luck","turn","twin","type","ugly","unit","upon","used","user","vast",
-  "vice","view","vote","wage","wait","wake","walk","wall","wave","weak","wear",
-  "week","weigh","west","whom","wild","wine","wing","wire","wise","wish","wood",
-  "wore","wrap","yard","yeah","zone",
-  // 5-letter words
-  "about","after","again","being","below","could","every","first","found","great",
-  "house","large","later","never","other","place","point","right","small","sound",
-  "still","think","three","under","water","where","which","while","world","would",
-  "write","young","above","admit","adopt","adult","agent","agree","ahead","alarm",
-  "album","alien","align","alive","allow","alone","along","alter","among","anger",
-  "angle","angry","apple","apply","arena","argue","arise","aside","award","awful",
-  "basic","batch","beach","began","begin","bench","birth","black","blade","blame",
-  "blank","blast","blaze","bleed","blend","bless","blind","block","blood","blown",
-  "board","boost","brain","brave","bread","break","breed","brick","brief","bring",
-  "broad","broke","brown","brush","build","bunch","burst","buyer","cabin","cable",
-  "carry","catch","cause","chain","chair","chaos","charm","chart","chase","cheap",
-  "check","chess","chest","chief","child","China","chunk","claim","class","clean",
-  "clear","climb","clock","close","cloud","coach","coast","count","court","cover",
-  "crack","craft","crash","crazy","cream","crime","cross","crowd","cruel","crush",
-  "curve","cycle","daily","dance","death","debug","decay","delay","delta","dense",
-  "depth","devil","dirty","doubt","dozen","draft","drain","drama","drawn","dream",
-  "dress","dried","drift","drink","drive","drove","dying","eager","early","earth",
-  "eight","elite","empty","enemy","enjoy","enter","equal","error","essay","event",
-  "exact","exist","extra","faith","false","fault","feast","fence","fever","fiber",
-  "field","fifth","fifty","fight","final","fixed","flame","flesh","float","flood",
-  "floor","flour","focus","force","forge","forth","forum","frame","fresh","front",
-  "fruit","fully","giant","given","glass","globe","going","grace","grade","grain",
-  "grand","grant","graph","grasp","grass","grave","green","gross","group","grown",
-  "guard","guess","guide","guilt","happy","harsh","heart","heavy","hence","horse",
-  "hotel","human","humor","ideal","image","imply","index","inner","input","issue",
-  "ivory","joint","judge","juice","knock","known","label","labor","layer","learn",
-  "least","leave","legal","level","light","limit","lived","local","logic","loose",
-  "lover","lower","loyal","lucky","lunch","lying","magic","major","maker","march",
-  "match","mayor","meant","media","mercy","merit","metal","meter","might","minor",
-  "minus","model","money","month","moral","motor","mount","mouse","mouth","movie",
-  "music","naive","nerve","night","noble","noise","north","noted","novel","nurse",
-  "occur","ocean","offer","often","opera","order","organ","ought","outer","owner",
-  "paint","panel","panic","paper","party","patch","pause","peace","penny","phase",
-  "phone","photo","piano","piece","pilot","pitch","pixel","plain","plane","plant",
-  "plate","plaza","plead","pluck","pouch","pound","power","press","price","pride",
-  "prime","print","prior","prize","probe","proof","proud","prove","psalm","pupil",
-  "queen","query","quest","queue","quick","quiet","quota","quote","radar","radio",
-  "raise","range","rapid","ratio","reach","react","ready","realm","rebel","refer",
-  "reign","relax","reply","rider","right","rigid","rival","river","robot","roman",
-  "rough","round","route","royal","rural","sadly","saint","salad","scale","scene",
-  "scope","score","sense","serve","seven","shade","shake","shall","shame","shape",
-  "share","sharp","sheet","shelf","shell","shift","shine","shirt","shock","shoot",
-  "shore","short","shout","sight","since","sixth","sixty","skill","skull","slash",
-  "sleep","slice","slide","smile","smoke","snake","solve","sorry","south","space",
-  "spare","speak","speed","spend","spent","spine","spite","split","spoke","spray",
-  "squad","stack","staff","stage","stain","stake","stall","stamp","stand","stare",
-  "start","state","steam","steel","steep","steer","stick","stock","stone","stood",
-  "store","storm","story","strip","stuck","study","stuff","style","sugar","sunny",
-  "super","surge","swear","sweep","sweet","swift","swing","sword","symbol","taste",
-  "teach","tears","thank","theme","there","thick","thing","third","those","throw",
-  "thumb","tight","tired","title","today","token","total","touch","tough","tower",
-  "trace","track","trade","trail","train","trait","treat","trend","trial","tribe",
-  "trick","tried","troop","truck","truly","trump","trust","truth","tumor","twice",
-  "twist","ultra","union","unite","unity","until","upper","upset","urban","usage",
-  "usual","valid","value","venue","verse","video","virus","visit","vital","vocal",
-  "voice","waste","watch","weave","weird","whale","wheat","wheel","whole","wider",
-  "woman","worth","wound","wrist","wrong","wrote","yield","youth",
-  // 6-letter words
-  "almost","always","before","behind","better","change","during","enough","family",
-  "friend","future","giving","golden","happen","having","island","little","living",
-  "making","market","matter","method","minute","modern","moment","moving","number",
-  "office","online","people","person","pretty","public","really","reason","result",
-  "second","should","simple","single","system","taking","trying","turned","useful",
-  "within","accept","access","across","action","active","actual","affair","afford",
-  "agency","amount","animal","annual","answer","anyway","appeal","appear","assume",
-  "attack","attend","august","author","basket","battle","beauty","become","behalf",
-  "belief","belong","beside","beyond","bishop","bitter","border","borrow","bottom",
-  "bought","branch","breath","bridge","bright","broken","budget","burden","bureau",
-  "button","camera","cancer","carbon","career","castle","caught","center","chance",
-  "chapel","charge","chosen","circle","client","closed","coffee","column","combat",
-  "common","comply","corner","costly","cotton","county","couple","course","covers",
-  "create","credit","crisis","custom","damage","danger","deadly","dealer","debate",
-  "decade","defeat","defend","define","degree","demand","denial","depend","deploy",
-  "deputy","desert","design","desire","detail","detect","device","differ","dinner",
-  "direct","divide","doctor","domain","double","driven","driver","easily","eating",
-  "effect","effort","eighth","emerge","empire","enable","ending","energy","engage",
-  "engine","ensure","entire","entity","equity","escape","estate","ethnic","evolve",
-  "exceed","except","expand","expect","expert","export","expose","extend","extent",
-  "fabric","fairly","fallen","farmer","father","figure","finger","finish","firmly",
-  "flight","flower","follow","forced","forest","forget","formal","former","foster",
-  "fourth","freely","frozen","garden","gather","gender","gentle","global","govern",
-  "growth","guilty","handle","hardly","health","heaven","height","highly","honest",
-  "horror","hungry","hunter","ignore","impact","import","impose","income","indeed",
-  "Indian","inform","injury","insect","inside","insist","intact","intend","intent",
-  "invest","invite","itself","junior","jungle","kidney","launch","latter","league",
-  "length","lesson","letter","lights","likely","linear","liquid","listen","locate",
-  "London","lovely","mainly","manage","manner","margin","marine","master","medium",
-  "member","memory","mental","merely","middle","mingle","mirror","mobile","modest",
-  "mother","motion","murder","museum","mutual","myself","namely","nation","nature",
-  "nearby","nearly","needle","newest","nicely","nobody","normal","notice","obtain",
-  "offend","option","orange","origin","outfit","output","palace","parade","parent",
-  "partly","patent","patrol","peanut","permit","phrase","picked","pillow","planet",
-  "player","please","pledge","plenty","pocket","poetry","poison","police","policy",
-  "prefer","prince","prison","profit","prompt","proper","proven","purple","pursue",
-  "racial","random","rather","record","reform","refuse","regard","regime","region",
-  "reject","relate","relief","remain","remedy","remote","remove","render","rental",
-  "repair","repeat","report","rescue","resign","resist","resort","retain","retire",
-  "return","reveal","review","reward","ritual","robust","rotate","ruling","sacred",
-  "safely","salary","sample","scheme","school","screen","search","season","secret",
-  "sector","secure","select","senior","series","settle","severe","sexual","shadow",
-  "shaken","shield","should","signal","silent","silver","simple","sister","sketch",
-  "slight","smooth","social","solely","source","speech","spirit","spread","spring",
-  "square","stable","statue","steady","stolen","strain","strand","stream","street",
-  "stress","strict","strike","string","stroke","strong","struck","studio","submit",
-  "sudden","suffer","summer","summit","supply","surely","survey","switch","talent",
-  "target","temple","tenant","tender","terror","thanks","thirty","thread","thrill",
-  "throat","thrown","tissue","tongue","toward","travel","treaty","tribal","tunnel",
-  "twelve","unfair","unique","unlike","update","urging","valley","verbal","victim",
-  "violet","virtue","vision","visual","volume","warmth","weapon","weekly","weight",
-  "window","winner","winter","wisdom","wonder","worker","worthy","yellow",
-  // 7-letter words
-  "another","because","between","certain","command","company","control","country",
-  "current","develop","display","example","finally","general","getting","himself",
-  "however","hundred","imagine","include","instead","keeping","looking","machine",
-  "million","morning","natural","nothing","outside","picture","problem","produce",
-  "program","provide","quality","quickly","reading","receive","running","several",
-  "society","someone","started","support","teacher","thought","through","turning",
-  "walking","without","working","writing","ability","absence","academy","account",
-  "achieve","acquire","address","advance","adverse","ancient","anxiety","anybody",
-  "applied","arrange","article","assault","attempt","attract","auction","average",
-  "backing","balance","banking","barrier","battery","bearing","because","bedroom",
-  "besides","billion","cabinet","capable","capital","capture","careful","catalog",
-  "central","chapter","charity","charter","chicken","chronic","circuit","citizen",
-  "classic","climate","cluster","coastal","collect","combine","comfort","comment",
-  "compete","concern","conduct","confirm","connect","consent","consist","contain",
-  "content","context","convert","correct","counter","coupled","courage","crucial",
-  "culture","cutting","dealing","declare","decline","default","defence","deficit",
-  "deliver","density","deposit","desktop","despite","devoted","digital","disable",
-  "disease","dismiss","distant","divided","donated","drawing","dynamic","earnest",
-  "eastern","economy","edition","elderly","element","elevate","embrace","emotion",
-  "emperor","endless","enforce","enhance","enquiry","episode","equally","essence",
-  "evening","evident","examine","exactly","excited","exhibit","expense","explain",
-  "exploit","explore","express","extreme","fashion","feature","fiction","finding",
-  "fishing","fitness","foreign","forever","formula","fortune","forward","founder",
-  "freedom","fulfill","funeral","further","genetic","genuine","gesture","habitat",
-  "halfway","handful","happily","harbour","heading","healthy","hearing","heavily",
-  "helpful","highway","history","holding","holiday","horizon","housing",
-  "illegal","illness","imagine","obvious","opening","opinion","organic","outline",
-  "overall","parking","partial","partner","passage","passing","patient","pattern",
-  "payload","payment","peasant","penalty","pension","percent","perfect","perhaps",
-  "persist","pioneer","plastic","pleased","pointed","portion","poverty","premium",
-  "premier","prepare","present","prevent","primary","printer","privacy","private",
-  "profile","project","promise","promote","prosper","protect","protest","proving",
-  "publish","purpose","pursuit","pushing","quarter","radical","rapidly","readily",
-  "reality","recover","reduced","reflect","regular","related","release","removal",
-  "removed","replace","request","require","resolve","respect","respond","restore",
-  "retired","retreat","returns","routine","roughly","satisfy","scatter","scholar",
-  "scratch","section","segment","serious","service","serving","session","setting",
-  "settler","shelter","shortly","sibling","sitting","skilled","slavery","smoking",
-  "soldier","somehow","speaker","special","species","sponsor","squeeze","stadium",
-  "station","storage","strange","stretch","student","subject","succeed","success",
-  "suggest","summary","surface","surgeon","surplus","survive","suspect","sustain",
-  "testing","theater","therapy","tobacco","tonight","totally","trading","tragedy",
-  "trigger","triumph","trouble","turning","typical","undergo","uniform","unknown",
-  "utterly","variety","vehicle","venture","version","veteran","victory","vintage",
-  "violent","virtual","visible","visitor","welfare","western","whisper","willing",
-  "witness","kitchen","meaning","measure","meeting","mention","mineral","missing",
-  "mission","mistake","mixture","monitor","mystery","network","neutral","notable",
-  "nuclear","nursing","observe","officer","operate",
-  // 8-letter words
-  "absolute","anything","becoming","building","business","children","complete",
-  "consider","continue","creative","daughter","decision","describe","discover",
-  "document","everyone","exercise","expected","exposure","finished","football",
-  "function","generate","happened","hospital","identify","increase","interest",
-  "involved","language","learning","material","medicine","midnight","mountain",
-  "national","negative","notebook","numerous","official","organize","original",
-  "painting","personal","platform","positive","possible","practice","prepared",
-  "probably","progress","property","provided","question","reaction","remember",
-  "research","resource","response","security","sentence","shopping","shoulder",
-  "software","solution","specific","standard","strategy","strength","suddenly",
-  "supposed","surprise","teaching","thinking","together","training","treasure",
-  "trillion","umbrella","universe","valuable","whatever","yourself","academic",
-  "accepted","accident","accurate","achieved","actually","addition","adequate",
-  "adjusted","advanced","advocate","affected","afforded","alliance","although",
-  "ambition","amounted","analysis","announce","annually","apparent","appetite",
-  "approach","approval","argument","artistic","assembly","assuming","athletic",
-  "attached","attorney","audience","autonomy","backward","balanced","bathroom",
-  "becoming","behavior","birthday","blanking","bleeding","blooming","boarding",
-  "bookmark","boundary","breaking","breeding","bringing","browsing","bulletin",
-  "campaign","capacity","catching","category","cautious","ceremony","chairman",
-  "champion","changing","checking","chemical","choosing","civilian","clearing",
-  "climbing","clinical","clothing","coaching","collapse","colonial","colorado",
-  "combined","comeback","comfort","commerce","commonly","communal","compared",
-  "compiler","complain","composed","computer","conflict","congress","connects",
-  "conquest","constant","consumer","contains","contrast","convince","corridor",
-  "coverage","creation","criminal","critical","crossing","cultural","currency",
-  "customer","database","deadline","debating","december","deciding","declared",
-  "declined","decrease","defeated","defender","definite","delivery","demanded",
-  "democrat","departed","deployed","designer","detailed","detector","devotion",
-  "dialogue","diplomat","directed","director","disabled","disaster","discount",
-  "disorder","dispatch","disposal","disposed","distance","distinct","district",
-  "division","doctrine","domestic","dominant","donation","doorstep","doubtful",
-  "download","downtown","dramatic","drawings","dropping","duration","dwelling",
-  "economic","educated","educator","election","elegance","elevator","eligible",
-  "embedded","emerging","emission","emphasis","employed","employee","employer",
-  "encoding","engaging","engineer","enormous","enrolled","entirely","entitled",
-  "entrance","envelope","equality","equipped","estimate","evaluate","eventual",
-  "evidence","examined","examiner","exchange","exciting","executed","executor",
-  "exemplar","exercise","existing","expanded","expedite","expelled","explicit",
-  "extended","exterior","external","facility","familiar","favorite","featured",
-  "february","feedback","festival","fiercely","figuring","filename","filmmaker",
-  "filtered","finalist","finally","findings","firewall","flexible","floating",
-  "flooding","folklore","fondness","foothill","football","forecast","formerly",
-  "fourteen","fraction","fragment","franklin","freshman","friendly","frontier",
-  "fruitful","fulltime","gambling","gathered","generate","generous","genocide",
-  "geometry","glancing","glossary","goodness","governed","governor","graceful",
-  "graduate","graphics","grateful","gripping","grooming","grounded","grouping",
-  "guardian","guidance","habitual","handbook","handling","happened","hardware",
-  "harmless","headline","heritage","honestly","honorary","hopeless","horrible",
-  "humanity","humility","humorous","hydrogen","ignorant","illusion","imagined",
-  "immature","imminent","immunity","imperial","implicit","imported","imposing",
-  "impaired","improved","incident","inclined","includes","incoming","indexing",
-  "indicate","indirect","industry","inferior","infinite","informal","informed",
-  "inherent","inhaling","initiate","innocent","innovate","inspired","instance",
-  "integral","intended","interact","interior","internal","interval","intimate",
-  "inverted","investor","involved","isolated","judgment","junction","keyboard",
-  "kingdom","labeling","landmark","landlord","laughing","launched","lawmaker",
-  "layering","learning","leftover","likewise","limiting","listened","literacy",
-  "literary","lifetime","lighting","likeness","lingered",
-  "location","luckiest","luminous","magnetic","maintain","majority","managing",
-  "manifest","mankind","manually","marathon","marginal","marriage","massacre",
-  "mastered","material","maturity","maximize","meantime","measured","mechanic",
-  "medieval","membrane","memorial","merchant","midnight","militant","military",
-  "minimize","minister","minority","miracles","mistaken","mobility","modeling",
-  "moderate","molecule","monetary","monopoly","moreover","mortgage","mounting",
-  "movement","multiply","mundane","murdered","mutation","mutually","mystical",
-  "narrowed","national","navigate","neighbor","nitrogen","nobleman","nominate",
-  "nonsense","normally","northern","notation","November","objected","obtained",
-  "obstacle","occasion","occupied","occurred","offering","official","offshore",
-  "olympics","operated","operator","opponent","opposing","opposite","optimism",
-  "optional","ordering","ordinary","organism","oriented","orthodox","outbreak",
-  "outreach","overcome","overhead","overlook","overturn","overview","painting",
-  "pamphlet","pandemic","parallel","parental","partisan","passport","patience",
-  "peaceful","peasants","peculiar","pedagogy","penalize","perceive","periodic",
-  "personal","persuade","petition","pharmacy","physical","planning","platform",
-  "pleasant","pleasure","plunging","pointing","polished","politely","politics",
-  "populace","populate","portrait","positron","powerful","precious","predator",
-  "pregnant","prepared","presence","preserve","pressing","pressure","prestige",
-  "presumed","pretense","previous","princess","printing","prisoner","probably",
-  "proceeds","produced","producer","profound","promised","promptly","properly",
-  "proposal","proposed","prospect","protocol","provoked","prudence","publicly",
-  "punished","purchase","pursuing","puzzling","quadrant","quantity","quarters",
-  "quickest","railroad","ranching","randomly","rational","readable","realized",
-  "reasoned","rebelled","received","receiver","recently","reckless","recorded",
-  "recovery","redesign","reducing","referral","referred","regarded","regional",
-  "register","regulate","rejected","relating","relation","relative","released",
-  "relevant","reliable","relieved","reliance","religion","remained","reminder",
-  "renowned","repeated","replaced","reported","reporter","republic","required",
-  "reserved","resident","resigned","resolved","resource","restored","restrain",
-  "retailer","retained","retiring","retrieve","returned","revealed","reviewer",
-  "revision","reviving","rewarded","rigorous","romantic","ruthless","sabotage",
-  "sanction","scanning","scenario","schedule","scramble","scrutiny","seasonal",
-  "secondly","selected","semester","sensible","separate","sequence","serenity",
-  "sergeant","settling","severely","shifting","shipping","shooting","shortage",
-  "showdown","shutdown","sideways","signaled","silenced","simulate","singular",
-  "skeleton","sleeping","slipping","smallest","smashing","snapshot","societal",
-  "softened","solitary","somebody","somewhat","southern","spanning","speaking",
-  "specials","specimen","spending","spinning","splendid","sporting","spotting",
-  "sprinkle","squarely","squeezing","stability","staffing","stagnant","standing",
-  "startled","starting","statutes","stealing","steering","stepping","sticking",
-  "stirring","stopping","straight","stranger","striking","strongly","struggle",
-  "stunning","suburban","succeeds","succinctly","suddenly","suffered","suitable",
-  "summoned","superior","supplant","supplied","supplier","suppress","surgical",
-  "surprise","surround","survival","suspense","swimming","symbolic","sympathy",
-  "syndrome","tactical","tailored","tangible","taxpayer","teaching","teammate",
-  "tendency","terminal","terrible","terrific","tertiary","textbook","thankful",
-  "theology","theorist","thinking","thirteen","thorough","thousand","threaten",
-  "thriller","thriving","tickling","tightest","timeline","tolerant","tomorrow",
-  "touching","tracking","trailing","treating","trillion","troubled","tutorial",
-  "twisting","ultimate","umbrella","unbiased","underway","universe","unlocked",
-  "unlikely","unmarked","unsigned","unstable","updating","upheaval","uprising",
-  "upstream","urgently","utilized","vacation","validate","validity","valuably",
-  "variable","vanished","velocity","vendetta","ventured","verified","vertical",
-  "vicinity","viewable","violated","violence","Virginia","virtuous","visiting",
-  "visually","volatile","volcanic","volition","vocation","voicedly","weakness",
-  "wearable","weighing","welcomed","whenever","wherever","whisking","widening",
-  "wildfire","wildness","windmill","wireless","withdrew","woodland","workshop",
-  "wrapping","yearbook","yearning","yielding","youthful","zealotry","zeppelin",
-] as const;
+let globalUpgrades: Record<string, number> = { monkey: 0, typewriter: 0, training: 0, quill: 0 };
+let clickUpgrades: Record<string, number> = { power: 0, multiplier: 0 };
 
-const WORD_SET: ReadonlySet<string> = new Set(
-  WORD_LIST.map((w) => w.toLowerCase()).filter((w) => /^[a-z]{3,8}$/.test(w))
-);
+let monkeys: MonkeyData[] = [];
 
-// --------------- State ---------------
+let playerBuffer = "";
+let playerDisplayChars = "";
+let playerTickerHistory: string[] = [];
 
-function defaultState(): GameState {
-  return {
-    bananas: 0,
-    totalLetters: 0,
-    clickPower: 1,
-    upgrades: { monkey: 0, typewriter: 0, training: 0, quill: 0 },
-    wordBuffer: "",
-    recentWords: [],
-    wordCounts: {},
-    totalWordsFound: 0,
-    lastSaveTime: Date.now(),
-  };
-}
+let recentWords: string[] = [];
+let wordCounts: Record<string, number> = {};
+let totalWordsFound = 0;
 
-let state: GameState = defaultState();
+let lastWordTime = 0;
+let comboCount = 0;
+let lastSaveTime = Date.now();
 
-// Display buffer for the typewriter output (not persisted)
-let displayBuffer = "";
+let activeTab = "global";
+
+// Accumulator for fractional chars per monkey per tick
+let monkeyCharAccumulators: number[] = [];
 
 // --------------- Derived Values ---------------
 
-function getUpgradeCost(id: UpgradeId): number {
-  const def = UPGRADE_DEFS[id];
-  return Math.floor(def.baseCost * Math.pow(def.costMultiplier, state.upgrades[id]));
+function getUpgradeCost(defs: Record<string, UpgradeDef>, id: string, level: number): bigint {
+  const def = defs[id];
+  return BigInt(Math.floor(Number(def.baseCost) * Math.pow(def.costMult, level)));
 }
 
-function getLettersPerSecond(): number {
-  let baseLps = 0;
-  const ids = Object.keys(UPGRADE_DEFS) as UpgradeId[];
-  for (const id of ids) {
-    baseLps += UPGRADE_DEFS[id].lpsAdd * state.upgrades[id];
+function getMonkeyLPS(monkey: MonkeyData): number {
+  const base = 1 + globalUpgrades.typewriter + monkey.speedLevel;
+  let mult = 1;
+  if (globalUpgrades.training > 0) mult *= Math.pow(2, globalUpgrades.training);
+  if (globalUpgrades.quill > 0) mult *= Math.pow(10, globalUpgrades.quill);
+  return base * mult;
+}
+
+function getTotalLPS(): number {
+  let total = 0;
+  for (const m of monkeys) {
+    total += getMonkeyLPS(m);
+  }
+  return total;
+}
+
+function getClickPower(): number {
+  const base = 1 + clickUpgrades.power;
+  const mult = Math.pow(2, clickUpgrades.multiplier);
+  return Math.floor(base * mult);
+}
+
+function getWordBonus(word: string, monkey?: MonkeyData): bigint {
+  let bonus = BigInt(word.length * word.length);
+
+  // Per-monkey bonus
+  if (monkey && monkey.bonusLevel > 0) {
+    const mult = Math.pow(1.5, monkey.bonusLevel);
+    bonus = BigInt(Math.floor(Number(bonus) * mult));
   }
 
-  let multiplier = 1;
-  for (const id of ids) {
-    if (UPGRADE_DEFS[id].lpsMultiplier > 1 && state.upgrades[id] > 0) {
-      multiplier *= Math.pow(UPGRADE_DEFS[id].lpsMultiplier, state.upgrades[id]);
+  // Combo bonus
+  const now = Date.now();
+  if (now - lastWordTime < COMBO_WINDOW_MS && lastWordTime > 0) {
+    comboCount++;
+  } else {
+    comboCount = 1;
+  }
+  lastWordTime = now;
+
+  if (comboCount > 1) {
+    const comboMult = 1 + (comboCount - 1) * 0.1;
+    bonus = BigInt(Math.floor(Number(bonus) * comboMult));
+  }
+
+  return bonus;
+}
+
+// --------------- Word Detection ---------------
+
+function checkForWordInBuffer(buffer: string, monkey?: MonkeyData): { word: string; bonus: bigint } | null {
+  for (let len = Math.min(buffer.length, MAX_WORD_LENGTH); len >= MIN_WORD_LENGTH; len--) {
+    const candidate = buffer.slice(-len);
+    if (WORD_SET.has(candidate)) {
+      const bonus = getWordBonus(candidate, monkey);
+      return { word: candidate, bonus };
+    }
+  }
+  return null;
+}
+
+// --------------- Character Generation ---------------
+
+function generateCharsForMonkey(monkey: MonkeyData, amount: number): void {
+  const chars = Math.floor(amount);
+  if (chars <= 0) return;
+
+  bananas += BigInt(chars);
+  totalLetters += BigInt(chars);
+
+  for (let i = 0; i < chars; i++) {
+    const char = String.fromCharCode(97 + Math.floor(Math.random() * 26));
+    monkey.buffer += char;
+    monkey.displayChars += char;
+
+    const result = checkForWordInBuffer(monkey.buffer, monkey);
+    if (result) {
+      bananas += result.bonus;
+      totalWordsFound++;
+      monkey.wordsFound++;
+      wordCounts[result.word] = (wordCounts[result.word] || 0) + 1;
+      recentWords.unshift(result.word);
+      if (recentWords.length > MAX_RECENT_WORDS) recentWords.pop();
+
+      monkey.tickerHistory.unshift(result.word + " (+" + result.bonus.toString() + ")");
+      if (monkey.tickerHistory.length > MAX_TICKER_HISTORY) monkey.tickerHistory.pop();
+
+      monkey.buffer = "";
+    }
+
+    if (monkey.buffer.length > MAX_WORD_LENGTH) {
+      monkey.buffer = monkey.buffer.slice(-MAX_WORD_LENGTH);
     }
   }
 
-  return baseLps * multiplier;
+  if (monkey.displayChars.length > MAX_DISPLAY_CHARS) {
+    monkey.displayChars = monkey.displayChars.slice(-MAX_DISPLAY_CHARS);
+  }
 }
 
-// --------------- DOM References ---------------
+function generateCharsForPlayer(amount: number): void {
+  const chars = Math.floor(amount);
+  if (chars <= 0) return;
 
-function getElement(id: string): HTMLElement {
+  bananas += BigInt(chars);
+  totalLetters += BigInt(chars);
+
+  for (let i = 0; i < chars; i++) {
+    const char = String.fromCharCode(97 + Math.floor(Math.random() * 26));
+    playerBuffer += char;
+    playerDisplayChars += char;
+
+    const result = checkForWordInBuffer(playerBuffer);
+    if (result) {
+      bananas += result.bonus;
+      totalWordsFound++;
+      wordCounts[result.word] = (wordCounts[result.word] || 0) + 1;
+      recentWords.unshift(result.word);
+      if (recentWords.length > MAX_RECENT_WORDS) recentWords.pop();
+
+      playerTickerHistory.unshift(result.word + " (+" + result.bonus.toString() + ")");
+      if (playerTickerHistory.length > MAX_TICKER_HISTORY) playerTickerHistory.pop();
+
+      playerBuffer = "";
+    }
+
+    if (playerBuffer.length > MAX_WORD_LENGTH) {
+      playerBuffer = playerBuffer.slice(-MAX_WORD_LENGTH);
+    }
+  }
+
+  if (playerDisplayChars.length > MAX_DISPLAY_CHARS) {
+    playerDisplayChars = playerDisplayChars.slice(-MAX_DISPLAY_CHARS);
+  }
+}
+
+// --------------- Formatting ---------------
+
+function formatBigInt(n: bigint): string {
+  if (n < 0n) return "-" + formatBigInt(-n);
+  const s = n.toString();
+  const len = s.length;
+  if (len <= 3) return s;
+
+  const suffixes = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"];
+  const tierIndex = Math.min(Math.floor((len - 1) / 3), suffixes.length - 1);
+  const divisorDigits = tierIndex * 3;
+
+  const sigPart = s.substring(0, len - divisorDigits);
+  const fracPart = s.substring(len - divisorDigits, len - divisorDigits + 2).padEnd(2, "0");
+
+  if (sigPart.length === 1) return sigPart + "." + fracPart + suffixes[tierIndex];
+  if (sigPart.length === 2) return sigPart + "." + fracPart.charAt(0) + suffixes[tierIndex];
+  return sigPart + suffixes[tierIndex];
+}
+
+function formatNumber(n: number): string {
+  return formatBigInt(BigInt(Math.floor(n)));
+}
+
+// --------------- DOM Helpers ---------------
+
+function getEl(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Element #${id} not found`);
   return el;
 }
 
-const dom = {
-  bananas: () => getElement("bananas"),
-  lps: () => getElement("lps"),
-  totalLetters: () => getElement("total-letters"),
-  totalWords: () => getElement("total-words"),
-  typewriterOutput: () => getElement("typewriter-output"),
-  currentBuffer: () => getElement("current-buffer"),
-  clickBtn: () => getElement("click-btn"),
-  recentWordsList: () => getElement("recent-words-list"),
-  mostCommonWord: () => getElement("most-common-word"),
-  uniqueWordsCount: () => getElement("unique-words-count"),
-  offlineModal: () => getElement("offline-modal"),
-  offlineEarnings: () => getElement("offline-earnings"),
-  offlineClose: () => getElement("offline-close"),
-  saveBtn: () => getElement("save-btn"),
-  resetBtn: () => getElement("reset-btn"),
-};
-
-// --------------- Formatting ---------------
-
-function formatNumber(n: number): string {
-  if (n < 1_000) return Math.floor(n).toString();
-  if (n < 1_000_000) return (n / 1_000).toFixed(1) + "K";
-  if (n < 1_000_000_000) return (n / 1_000_000).toFixed(2) + "M";
-  if (n < 1_000_000_000_000) return (n / 1_000_000_000).toFixed(2) + "B";
-  if (n < 1e15) return (n / 1e12).toFixed(2) + "T";
-  if (n < 1e18) return (n / 1e15).toFixed(2) + "Qa";
-  if (n < 1e21) return (n / 1e18).toFixed(2) + "Qi";
-  if (n < 1e24) return (n / 1e21).toFixed(2) + "Sx";
-  if (n < 1e27) return (n / 1e24).toFixed(2) + "Sp";
-  if (n < 1e30) return (n / 1e27).toFixed(2) + "Oc";
-  if (n < 1e33) return (n / 1e30).toFixed(2) + "No";
-  return (n / 1e33).toFixed(2) + "Dc";
-}
-
 // --------------- Rendering ---------------
 
 function renderStats(): void {
-  dom.bananas().textContent = formatNumber(state.bananas);
-  dom.lps().textContent = formatNumber(getLettersPerSecond());
-  dom.totalLetters().textContent = formatNumber(state.totalLetters);
-  dom.totalWords().textContent = formatNumber(state.totalWordsFound);
+  getEl("bananas").textContent = formatBigInt(bananas);
+  getEl("lps").textContent = formatNumber(getTotalLPS());
+  getEl("total-letters").textContent = formatBigInt(totalLetters);
+  getEl("total-words").textContent = totalWordsFound.toString();
+
+  const comboEl = getEl("combo");
+  if (comboCount > 1 && Date.now() - lastWordTime < COMBO_WINDOW_MS) {
+    comboEl.textContent = comboCount + "x";
+    comboEl.classList.add("combo-active");
+  } else {
+    comboEl.textContent = "--";
+    comboEl.classList.remove("combo-active");
+  }
+}
+
+function renderPlayerTicker(): void {
+  const output = getEl("player-output");
+  output.textContent = playerDisplayChars || "(click to start typing)";
+
+  const wordsList = getEl("player-words");
+  wordsList.innerHTML = "";
+  for (const entry of playerTickerHistory) {
+    const div = document.createElement("div");
+    div.className = "ticker-word-entry";
+    div.textContent = entry;
+    wordsList.appendChild(div);
+  }
+}
+
+function renderMonkeyTickers(): void {
+  const container = getEl("monkey-tickers-list");
+
+  if (monkeys.length === 0) {
+    container.innerHTML = '<p class="no-monkeys">Hire your first monkey to see them type!</p>';
+    return;
+  }
+
+  // Remove placeholder text
+  const placeholder = container.querySelector(".no-monkeys");
+  if (placeholder) placeholder.remove();
+
+  // Create or update monkey ticker elements
+  for (const monkey of monkeys) {
+    let el = document.getElementById("monkey-ticker-" + monkey.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "monkey-ticker-" + monkey.id;
+      el.className = "monkey-ticker";
+      container.appendChild(el);
+    }
+
+    const lps = getMonkeyLPS(monkey);
+    el.innerHTML =
+      '<div class="monkey-ticker-header">' +
+        '<span class="monkey-name">' + escapeHtml(monkey.name) + '</span>' +
+        '<span class="monkey-lps">' + formatNumber(lps) + ' LPS</span>' +
+      '</div>' +
+      '<div class="monkey-chars">' + escapeHtml(monkey.displayChars || "...") + '</div>' +
+      '<div class="monkey-words-list">' +
+        monkey.tickerHistory.map(w => '<div class="ticker-word-entry">' + escapeHtml(w) + '</div>').join('') +
+      '</div>';
+  }
+
+  // Remove tickers for monkeys that no longer exist
+  const existingTickers = container.querySelectorAll(".monkey-ticker");
+  existingTickers.forEach(ticker => {
+    const id = parseInt(ticker.id.replace("monkey-ticker-", ""), 10);
+    if (!monkeys.find(m => m.id === id)) {
+      ticker.remove();
+    }
+  });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function renderUpgrades(): void {
-  const ids = Object.keys(UPGRADE_DEFS) as UpgradeId[];
-  for (const id of ids) {
-    const costEl = document.getElementById(`cost-${id}`);
-    const ownedEl = document.getElementById(`owned-${id}`);
-    const btn = document.querySelector(`[data-upgrade="${id}"]`) as HTMLButtonElement | null;
+  renderGlobalUpgrades();
+  renderClickUpgrades();
+  renderIndividualUpgrades();
+}
 
-    if (costEl) costEl.textContent = formatNumber(getUpgradeCost(id));
-    if (ownedEl) ownedEl.textContent = state.upgrades[id].toString();
-    if (btn) btn.disabled = state.bananas < getUpgradeCost(id);
+function renderGlobalUpgrades(): void {
+  const container = getEl("tab-global");
+  container.innerHTML = "";
+
+  for (const [id, def] of Object.entries(GLOBAL_UPGRADES)) {
+    const level = globalUpgrades[id] || 0;
+    const cost = getUpgradeCost(GLOBAL_UPGRADES, id, level);
+    const canAfford = bananas >= cost;
+
+    const btn = document.createElement("button");
+    btn.className = "upgrade-btn" + (canAfford ? "" : " disabled");
+    btn.disabled = !canAfford;
+    btn.innerHTML =
+      '<div class="upgrade-info">' +
+        '<span class="upgrade-name">' + def.name + '</span>' +
+        '<span class="upgrade-desc">' + def.desc + '</span>' +
+      '</div>' +
+      '<div class="upgrade-cost">Cost: ' + formatBigInt(cost) + '</div>' +
+      '<div class="upgrade-owned">Owned: ' + level + '</div>';
+    btn.addEventListener("click", () => purchaseGlobalUpgrade(id));
+    container.appendChild(btn);
   }
 }
 
-function renderTypewriter(): void {
-  const output = dom.typewriterOutput();
-  output.textContent = displayBuffer.slice(-200);
-  output.scrollTop = output.scrollHeight;
+function renderClickUpgrades(): void {
+  const container = getEl("tab-click");
+  container.innerHTML = "";
 
-  dom.currentBuffer().textContent = state.wordBuffer || "(empty)";
+  // Show current click power
+  const info = document.createElement("div");
+  info.className = "click-power-info";
+  info.textContent = "Current click power: " + getClickPower() + " chars/click";
+  container.appendChild(info);
+
+  for (const [id, def] of Object.entries(CLICK_UPGRADES)) {
+    const level = clickUpgrades[id] || 0;
+    const cost = getUpgradeCost(CLICK_UPGRADES, id, level);
+    const canAfford = bananas >= cost;
+
+    const btn = document.createElement("button");
+    btn.className = "upgrade-btn" + (canAfford ? "" : " disabled");
+    btn.disabled = !canAfford;
+    btn.innerHTML =
+      '<div class="upgrade-info">' +
+        '<span class="upgrade-name">' + def.name + '</span>' +
+        '<span class="upgrade-desc">' + def.desc + '</span>' +
+      '</div>' +
+      '<div class="upgrade-cost">Cost: ' + formatBigInt(cost) + '</div>' +
+      '<div class="upgrade-owned">Owned: ' + level + '</div>';
+    btn.addEventListener("click", () => purchaseClickUpgrade(id));
+    container.appendChild(btn);
+  }
+}
+
+function renderIndividualUpgrades(): void {
+  const container = getEl("tab-individual");
+  container.innerHTML = "";
+
+  if (monkeys.length === 0) {
+    container.innerHTML = '<p class="no-monkeys">Hire a monkey first!</p>';
+    return;
+  }
+
+  for (const monkey of monkeys) {
+    const card = document.createElement("div");
+    card.className = "monkey-upgrade-card";
+
+    // Name editing
+    const nameRow = document.createElement("div");
+    nameRow.className = "monkey-name-row";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "monkey-name-input";
+    nameInput.value = monkey.name;
+    nameInput.maxLength = 20;
+    nameInput.addEventListener("change", () => {
+      monkey.name = nameInput.value.trim() || ("Monkey " + monkey.id);
+      renderMonkeyTickers();
+    });
+    nameRow.appendChild(nameInput);
+
+    const statsRow = document.createElement("div");
+    statsRow.className = "monkey-stats-row";
+    statsRow.textContent = "LPS: " + formatNumber(getMonkeyLPS(monkey)) + " | Words: " + monkey.wordsFound;
+
+    card.appendChild(nameRow);
+    card.appendChild(statsRow);
+
+    // Per-monkey upgrades
+    for (const [uid, def] of Object.entries(MONKEY_UPGRADE_DEFS)) {
+      const level = uid === "speed" ? monkey.speedLevel : monkey.bonusLevel;
+      const cost = getUpgradeCost(MONKEY_UPGRADE_DEFS, uid, level);
+      const canAfford = bananas >= cost;
+
+      const btn = document.createElement("button");
+      btn.className = "upgrade-btn small" + (canAfford ? "" : " disabled");
+      btn.disabled = !canAfford;
+      btn.innerHTML =
+        '<div class="upgrade-info">' +
+          '<span class="upgrade-name">' + def.name + '</span>' +
+          '<span class="upgrade-desc">' + def.desc + '</span>' +
+        '</div>' +
+        '<div class="upgrade-cost">Cost: ' + formatBigInt(cost) + '</div>' +
+        '<div class="upgrade-owned">Lv. ' + level + '</div>';
+      btn.addEventListener("click", () => purchaseMonkeyUpgrade(monkey.id, uid));
+      card.appendChild(btn);
+    }
+
+    container.appendChild(card);
+  }
 }
 
 function renderWordDiscovery(): void {
-  // Recent words
-  const list = dom.recentWordsList();
+  const list = getEl("recent-words-list");
   list.innerHTML = "";
-  for (const word of state.recentWords) {
+  for (const word of recentWords) {
     const div = document.createElement("div");
     div.className = "word-entry";
     const bonus = word.length * word.length;
-    div.textContent = `"${word}" (+${bonus} 🍌)`;
+    div.textContent = '"' + word + '" (+' + bonus + ' bananas)';
     list.appendChild(div);
   }
 
-  // Most common word
-  const common = dom.mostCommonWord();
   let bestWord = "";
   let bestCount = 0;
-  for (const [word, count] of Object.entries(state.wordCounts)) {
+  for (const [word, count] of Object.entries(wordCounts)) {
     if (count > bestCount) {
       bestCount = count;
       bestWord = word;
     }
   }
-  common.textContent = bestWord
-    ? `"${bestWord}" (×${bestCount})`
+  getEl("most-common-word").textContent = bestWord
+    ? '"' + bestWord + '" (x' + bestCount + ')'
     : "None yet";
 
-  // Unique words count
-  dom.uniqueWordsCount().textContent = Object.keys(state.wordCounts).length.toString();
+  getEl("unique-words-count").textContent = Object.keys(wordCounts).length.toString();
 }
 
 function renderAll(): void {
   renderStats();
+  renderPlayerTicker();
+  renderMonkeyTickers();
   renderUpgrades();
-  renderTypewriter();
   renderWordDiscovery();
 }
 
-// --------------- Game Logic ---------------
+// --------------- Purchases ---------------
 
-function checkForWord(): void {
-  const buf = state.wordBuffer;
-  for (let len = Math.min(buf.length, MAX_WORD_LENGTH); len >= MIN_WORD_LENGTH; len--) {
-    const candidate = buf.slice(-len);
-    if (WORD_SET.has(candidate)) {
-      const bonus = len * len;
-      state.bananas += bonus;
+function purchaseGlobalUpgrade(id: string): void {
+  const level = globalUpgrades[id] || 0;
+  const cost = getUpgradeCost(GLOBAL_UPGRADES, id, level);
+  if (bananas < cost) return;
 
-      state.totalWordsFound++;
-      state.wordCounts[candidate] = (state.wordCounts[candidate] || 0) + 1;
-      state.recentWords.unshift(candidate);
-      if (state.recentWords.length > 10) {
-        state.recentWords.pop();
-      }
+  bananas -= cost;
+  globalUpgrades[id] = level + 1;
 
-      state.wordBuffer = "";
-      return;
-    }
-  }
-}
-
-function generateCharacters(amount: number): void {
-  const chars = Math.floor(amount);
-  if (chars <= 0) return;
-
-  state.bananas += chars;
-  state.totalLetters += chars;
-
-  for (let i = 0; i < chars; i++) {
-    const char = String.fromCharCode(97 + Math.floor(Math.random() * 26));
-    state.wordBuffer += char;
-    displayBuffer += char;
-
-    checkForWord();
-
-    if (state.wordBuffer.length > MAX_WORD_LENGTH) {
-      state.wordBuffer = state.wordBuffer.slice(-MAX_WORD_LENGTH);
-    }
+  if (id === "monkey") {
+    const newId = monkeys.length > 0 ? Math.max(...monkeys.map(m => m.id)) + 1 : 1;
+    const nameIndex = (newId - 1) % MONKEY_NAMES.length;
+    monkeys.push({
+      id: newId,
+      name: MONKEY_NAMES[nameIndex],
+      buffer: "",
+      displayChars: "",
+      tickerHistory: [],
+      wordsFound: 0,
+      speedLevel: 0,
+      bonusLevel: 0,
+    });
+    monkeyCharAccumulators.push(0);
   }
 
-  // Keep display buffer from growing unbounded
-  if (displayBuffer.length > 500) {
-    displayBuffer = displayBuffer.slice(-500);
-  }
-}
-
-function handleClick(): void {
-  generateCharacters(state.clickPower);
   renderAll();
 }
 
-function purchaseUpgrade(id: UpgradeId): void {
-  const cost = getUpgradeCost(id);
-  if (state.bananas >= cost) {
-    state.bananas -= cost;
-    state.upgrades[id]++;
-    renderAll();
-  }
+function purchaseClickUpgrade(id: string): void {
+  const level = clickUpgrades[id] || 0;
+  const cost = getUpgradeCost(CLICK_UPGRADES, id, level);
+  if (bananas < cost) return;
+
+  bananas -= cost;
+  clickUpgrades[id] = level + 1;
+
+  // Update click button text
+  const sub = document.querySelector("#click-btn .btn-sub");
+  if (sub) sub.textContent = "+" + getClickPower() + " letters per click";
+
+  renderAll();
+}
+
+function purchaseMonkeyUpgrade(monkeyId: number, upgradeId: string): void {
+  const monkey = monkeys.find(m => m.id === monkeyId);
+  if (!monkey) return;
+
+  const level = upgradeId === "speed" ? monkey.speedLevel : monkey.bonusLevel;
+  const cost = getUpgradeCost(MONKEY_UPGRADE_DEFS, upgradeId, level);
+  if (bananas < cost) return;
+
+  bananas -= cost;
+  if (upgradeId === "speed") monkey.speedLevel++;
+  else monkey.bonusLevel++;
+
+  renderAll();
+}
+
+// --------------- Click Handler ---------------
+
+function handleClick(): void {
+  generateCharsForPlayer(getClickPower());
+  renderAll();
+}
+
+// --------------- Tab Management ---------------
+
+function switchTab(tab: string): void {
+  activeTab = tab;
+
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.classList.toggle("active", (btn as HTMLElement).dataset.tab === tab);
+  });
+
+  document.querySelectorAll(".tab-pane").forEach(pane => {
+    pane.classList.toggle("hidden", pane.id !== "tab-" + tab);
+  });
+
+  renderUpgrades();
 }
 
 // --------------- Save / Load ---------------
 
+function serialize(): string {
+  const save: SaveState = {
+    bananas: bananas.toString(),
+    totalLetters: totalLetters.toString(),
+    globalUpgrades: { ...globalUpgrades },
+    clickUpgrades: { ...clickUpgrades },
+    monkeys: monkeys.map(m => ({ ...m, tickerHistory: [...m.tickerHistory] })),
+    playerBuffer,
+    playerDisplayChars,
+    playerTickerHistory: [...playerTickerHistory],
+    recentWords: [...recentWords],
+    wordCounts: { ...wordCounts },
+    totalWordsFound,
+    lastWordTime,
+    comboCount,
+    lastSaveTime: Date.now(),
+  };
+  return JSON.stringify(save);
+}
+
 function saveGame(): void {
-  state.lastSaveTime = Date.now();
+  lastSaveTime = Date.now();
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    localStorage.setItem(SAVE_KEY, serialize());
   } catch {
-    // Storage might be full or unavailable; silently fail
+    // Storage might be full; silently fail
   }
 }
 
-function loadGame(): GameState | null {
+function loadGame(): boolean {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<GameState>;
+    if (!raw) return false;
+    const save = JSON.parse(raw) as Partial<SaveState>;
 
-    // Merge with defaults to handle missing fields from older saves
-    const merged: GameState = { ...defaultState(), ...parsed };
-    merged.upgrades = { ...defaultState().upgrades, ...(parsed.upgrades ?? {}) };
-    if (!Array.isArray(merged.recentWords)) merged.recentWords = [];
-    if (typeof merged.wordCounts !== "object" || merged.wordCounts === null) merged.wordCounts = {};
-    if (typeof merged.wordBuffer !== "string") merged.wordBuffer = "";
-    if (typeof merged.totalWordsFound !== "number") merged.totalWordsFound = 0;
-    return merged;
+    bananas = BigInt(save.bananas || "0");
+    totalLetters = BigInt(save.totalLetters || "0");
+
+    globalUpgrades = { monkey: 0, typewriter: 0, training: 0, quill: 0, ...(save.globalUpgrades || {}) };
+    clickUpgrades = { power: 0, multiplier: 0, ...(save.clickUpgrades || {}) };
+
+    if (Array.isArray(save.monkeys)) {
+      monkeys = save.monkeys.map(m => ({
+        id: m.id ?? 0,
+        name: m.name ?? "Monkey",
+        buffer: m.buffer ?? "",
+        displayChars: m.displayChars ?? "",
+        tickerHistory: Array.isArray(m.tickerHistory) ? m.tickerHistory.slice(0, MAX_TICKER_HISTORY) : [],
+        wordsFound: m.wordsFound ?? 0,
+        speedLevel: m.speedLevel ?? 0,
+        bonusLevel: m.bonusLevel ?? 0,
+      }));
+    } else {
+      monkeys = [];
+    }
+    monkeyCharAccumulators = monkeys.map(() => 0);
+
+    playerBuffer = save.playerBuffer ?? "";
+    playerDisplayChars = save.playerDisplayChars ?? "";
+    playerTickerHistory = Array.isArray(save.playerTickerHistory) ? save.playerTickerHistory.slice(0, MAX_TICKER_HISTORY) : [];
+
+    recentWords = Array.isArray(save.recentWords) ? save.recentWords : [];
+    wordCounts = (typeof save.wordCounts === "object" && save.wordCounts !== null) ? save.wordCounts : {};
+    totalWordsFound = save.totalWordsFound ?? 0;
+    lastWordTime = save.lastWordTime ?? 0;
+    comboCount = save.comboCount ?? 0;
+    lastSaveTime = save.lastSaveTime ?? Date.now();
+
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
 function resetGame(): void {
   if (confirm("Are you sure you want to reset all progress?")) {
     localStorage.removeItem(SAVE_KEY);
-    state = defaultState();
-    displayBuffer = "";
+    bananas = 0n;
+    totalLetters = 0n;
+    globalUpgrades = { monkey: 0, typewriter: 0, training: 0, quill: 0 };
+    clickUpgrades = { power: 0, multiplier: 0 };
+    monkeys = [];
+    monkeyCharAccumulators = [];
+    playerBuffer = "";
+    playerDisplayChars = "";
+    playerTickerHistory = [];
+    recentWords = [];
+    wordCounts = {};
+    totalWordsFound = 0;
+    lastWordTime = 0;
+    comboCount = 0;
+    lastSaveTime = Date.now();
+
+    // Clear monkey ticker DOM
+    getEl("monkey-tickers-list").innerHTML = "";
+
     renderAll();
   }
 }
 
+// --------------- Offline Progress ---------------
+
 function handleOfflineProgress(): void {
   const now = Date.now();
-  const elapsed = (now - state.lastSaveTime) / 1000;
+  const elapsed = (now - lastSaveTime) / 1000;
   if (elapsed < 10) return;
 
-  const lps = getLettersPerSecond();
+  const lps = getTotalLPS();
   if (lps <= 0) return;
 
   const offlineChars = Math.floor(lps * elapsed);
-  if (offlineChars > 0) {
-    // Just award bananas, no word detection for offline
-    state.bananas += offlineChars;
-    state.totalLetters += offlineChars;
+  if (offlineChars <= 0) return;
 
-    dom.offlineEarnings().textContent = formatNumber(offlineChars);
-    dom.offlineModal().classList.remove("hidden");
+  // Award bananas for characters
+  bananas += BigInt(offlineChars);
+  totalLetters += BigInt(offlineChars);
+
+  // Estimate words found offline based on average word rate
+  // Average word length ~4.5, probability of random word ≈ words_in_dict / 26^avg_len
+  // Simplified: estimate ~1 word per 5000 chars as a rough heuristic
+  const estimatedWords = Math.floor(offlineChars / 5000);
+  if (estimatedWords > 0) {
+    const avgBonus = 16; // average ~4-letter word bonus
+    bananas += BigInt(estimatedWords * avgBonus);
+    totalWordsFound += estimatedWords;
   }
+
+  const modal = getEl("offline-modal");
+  getEl("offline-earnings").textContent = formatBigInt(BigInt(offlineChars));
+  modal.classList.remove("hidden");
 }
 
 // --------------- Game Loop ---------------
 
-function gameTick(): void {
-  const lps = getLettersPerSecond();
-  const charsThisTick = lps / (1000 / TICK_INTERVAL_MS);
+let lastTickTime = Date.now();
+let tickCount = 0;
 
-  if (charsThisTick > 0) {
-    generateCharacters(charsThisTick);
+function gameTick(): void {
+  const now = Date.now();
+  const dt = Math.min(now - lastTickTime, 1000); // cap delta to 1 second
+  lastTickTime = now;
+  tickCount++;
+
+  const dtSec = dt / 1000;
+
+  for (let i = 0; i < monkeys.length; i++) {
+    const monkey = monkeys[i];
+    const lps = getMonkeyLPS(monkey);
+    const charsFloat = lps * dtSec + (monkeyCharAccumulators[i] || 0);
+    const charsInt = Math.floor(charsFloat);
+    monkeyCharAccumulators[i] = charsFloat - charsInt;
+
+    if (charsInt > 0) {
+      generateCharsForMonkey(monkey, charsInt);
+    }
   }
 
   renderStats();
-  renderUpgrades();
-  renderTypewriter();
+  renderPlayerTicker();
+  renderMonkeyTickers();
+
+  // Only re-render upgrades occasionally to save performance (every ~500ms = every 5 ticks)
+  if (tickCount % 5 === 0) {
+    renderUpgrades();
+    renderWordDiscovery();
+  }
+}
+
+// --------------- Visibility API for background ---------------
+
+function handleVisibilityChange(): void {
+  if (document.hidden) {
+    saveGame();
+  } else {
+    // Coming back - calculate offline progress
+    const now = Date.now();
+    const elapsed = (now - lastSaveTime) / 1000;
+    if (elapsed > 5) {
+      const lps = getTotalLPS();
+      if (lps > 0) {
+        const offlineChars = Math.floor(lps * elapsed);
+        bananas += BigInt(offlineChars);
+        totalLetters += BigInt(offlineChars);
+
+        const estimatedWords = Math.floor(offlineChars / 5000);
+        if (estimatedWords > 0) {
+          bananas += BigInt(estimatedWords * 16);
+          totalWordsFound += estimatedWords;
+        }
+      }
+    }
+    lastTickTime = Date.now();
+    lastSaveTime = Date.now();
+    renderAll();
+  }
 }
 
 // --------------- Initialization ---------------
 
 function init(): void {
-  // Load saved state
-  const saved = loadGame();
-  if (saved) {
-    state = saved;
+  const loaded = loadGame();
+  if (loaded) {
     handleOfflineProgress();
   }
 
   renderAll();
 
   // Click button
-  dom.clickBtn().addEventListener("click", handleClick);
+  getEl("click-btn").addEventListener("click", handleClick);
+  // Update click button text
+  const sub = document.querySelector("#click-btn .btn-sub");
+  if (sub) sub.textContent = "+" + getClickPower() + " letters per click";
 
-  // Upgrade buttons
-  const upgradeButtons = document.querySelectorAll<HTMLButtonElement>(".upgrade-btn");
-  upgradeButtons.forEach((btn) => {
+  // Tab buttons
+  document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.upgrade as UpgradeId;
-      if (id) purchaseUpgrade(id);
+      const tab = (btn as HTMLElement).dataset.tab;
+      if (tab) switchTab(tab);
     });
   });
 
   // Modal close
-  dom.offlineClose().addEventListener("click", () => {
-    dom.offlineModal().classList.add("hidden");
+  getEl("offline-close").addEventListener("click", () => {
+    getEl("offline-modal").classList.add("hidden");
   });
 
   // Save / Reset
-  dom.saveBtn().addEventListener("click", saveGame);
-  dom.resetBtn().addEventListener("click", resetGame);
+  getEl("save-btn").addEventListener("click", saveGame);
+  getEl("reset-btn").addEventListener("click", resetGame);
 
   // Game loop
   setInterval(gameTick, TICK_INTERVAL_MS);
@@ -720,6 +842,9 @@ function init(): void {
 
   // Save on page unload
   window.addEventListener("beforeunload", saveGame);
+
+  // Visibility change for background handling
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 }
 
 // Start the game when DOM is ready
