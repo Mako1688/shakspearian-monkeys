@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <meta name="description" content="An idle game about monkeys typing Shakespeare on typewriters" />
+  <meta name="description" content="An idle game about monkeys randomly typing on typewriters and accidentally discovering words" />
   <title>Shakespearian Monkeys 🐒🎭</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -28,24 +28,17 @@
         <span id="total-letters" class="stat-value">0</span>
       </div>
       <div class="stat">
-        <span class="stat-label">📖 Quotes Done</span>
-        <span id="total-quotes" class="stat-value">0</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">🔄 Cycle</span>
-        <span id="cycle-count" class="stat-value">1</span>
+        <span class="stat-label">📖 Words Found</span>
+        <span id="total-words" class="stat-value">0</span>
       </div>
     </section>
 
     <section id="typewriter-section">
       <h2>Typewriter Output</h2>
       <div id="typewriter-output" aria-live="polite"></div>
-      <div id="quote-progress">
-        <span id="quote-label">Current work:</span>
-        <div id="progress-bar-container">
-          <div id="progress-bar"></div>
-        </div>
-        <span id="progress-text">0%</span>
+      <div id="buffer-display">
+        <span>Current buffer:</span>
+        <span id="current-buffer">(empty)</span>
       </div>
     </section>
 
@@ -101,7 +94,7 @@
 
         <button class="upgrade-btn" data-upgrade="quill" type="button">
           <div class="upgrade-info">
-            <span class="upgrade-name">🪶 Shakespeare's Quill</span>
+            <span class="upgrade-name">🪶 Golden Quill</span>
             <span class="upgrade-desc">10× LPS multiplier</span>
           </div>
           <div class="upgrade-cost">
@@ -114,9 +107,14 @@
       </div>
     </section>
 
-    <section id="achievements-section">
-      <h2>Shakespeare Progress</h2>
-      <div id="achievements-list"></div>
+    <section id="word-discovery-section">
+      <h2>Word Discoveries</h2>
+      <div class="word-discovery-stats">
+        <p>Unique words: <span id="unique-words-count">0</span></p>
+        <p>Most common: <span id="most-common-word">None yet</span></p>
+      </div>
+      <h3>Recent Words</h3>
+      <div id="recent-words-list"></div>
     </section>
 
     <footer>
